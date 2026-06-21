@@ -34,6 +34,7 @@ import {
   FilterOutlined,
   EyeOutlined,
   MedicineBoxOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
 import { useApp } from '../context/AppContext';
 import {
@@ -77,6 +78,7 @@ const ProblemList: React.FC = () => {
   const processingCount = state.problems.filter(p => p.status === 'processing').length;
   const resolvedCount = state.problems.filter(p => p.status === 'resolved').length;
   const highCount = state.problems.filter(p => p.severity === 'high').length;
+  const isNewCount = state.problems.filter(p => p.isNewProblem).length;
 
   const severityColors = {
     high: 'red',
@@ -201,11 +203,14 @@ const ProblemList: React.FC = () => {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 100,
-      render: (status: ProblemStatus) => (
-        <Tag color={status === 'resolved' ? 'green' : status === 'processing' ? 'orange' : 'red'}>
-          {ProblemStatusLabels[status]}
-        </Tag>
+      width: 130,
+      render: (status: ProblemStatus, record: AuditProblem) => (
+        <Space size={4}>
+          <Tag color={status === 'resolved' ? 'green' : status === 'processing' ? 'orange' : 'red'}>
+            {ProblemStatusLabels[status]}
+          </Tag>
+          {record.isNewProblem && <Tag color="green">新增</Tag>}
+        </Space>
       ),
     },
     {
@@ -213,6 +218,13 @@ const ProblemList: React.FC = () => {
       dataIndex: 'createdAt',
       key: 'createdAt',
       width: 110,
+    },
+    {
+      title: '上次处理',
+      dataIndex: 'lastHandledAt',
+      key: 'lastHandledAt',
+      width: 110,
+      render: (lastHandledAt?: string) => lastHandledAt || '-',
     },
     {
       title: '操作',
@@ -249,7 +261,7 @@ const ProblemList: React.FC = () => {
   return (
     <div style={{ padding: '16px 0' }}>
       <Row gutter={16} style={{ marginBottom: 20 }}>
-        <Col span={5}>
+        <Col span={4}>
           <Card style={{ background: '#0f172a', border: '1px solid #334155' }}>
             <Statistic
               title="问题总数"
@@ -259,7 +271,7 @@ const ProblemList: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col span={5}>
+        <Col span={4}>
           <Card style={{ background: '#0f172a', border: '1px solid #334155' }}>
             <Statistic
               title="高风险"
@@ -269,7 +281,7 @@ const ProblemList: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col span={5}>
+        <Col span={4}>
           <Card style={{ background: '#0f172a', border: '1px solid #334155' }}>
             <Statistic
               title="待处理"
@@ -279,7 +291,7 @@ const ProblemList: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col span={5}>
+        <Col span={4}>
           <Card style={{ background: '#0f172a', border: '1px solid #334155' }}>
             <Statistic
               title="处理中"
@@ -297,6 +309,16 @@ const ProblemList: React.FC = () => {
               prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
               valueStyle={{ color: '#52c41a' }}
               suffix={state.problems.length > 0 ? `(${(resolvedCount / state.problems.length * 100).toFixed(0)}%)` : ''}
+            />
+          </Card>
+        </Col>
+        <Col span={4}>
+          <Card style={{ background: '#0f172a', border: '1px solid #334155' }}>
+            <Statistic
+              title="新增问题"
+              value={isNewCount}
+              prefix={<PlusOutlined style={{ color: '#34d399' }} />}
+              valueStyle={{ color: '#34d399' }}
             />
           </Card>
         </Col>
@@ -370,7 +392,10 @@ const ProblemList: React.FC = () => {
           dataSource={filteredProblems}
           rowKey="id"
           size="small"
-          scroll={{ x: 1300 }}
+          scroll={{ x: 1410 }}
+          onRow={(record: AuditProblem) => ({
+            style: record.isNewProblem ? { background: '#064e3b20' } : {},
+          })}
           pagination={{
             pageSize: 10,
             showSizeChanger: true,
@@ -476,6 +501,36 @@ const ProblemList: React.FC = () => {
                 )}
               </Descriptions.Item>
             </Descriptions>
+            {(selectedProblem.lastHandledAt || selectedProblem.lastHandledBy || selectedProblem.previousStatus || selectedProblem.previousOpinion) && (
+              <>
+                <Divider style={{ borderColor: '#334155', margin: '12px 0' }} />
+                <div style={{ marginBottom: 12, fontWeight: 500 }}>上次处理记录</div>
+                <Descriptions size="small" column={2} labelStyle={{ color: '#64748b' }}>
+                  {selectedProblem.lastHandledAt && (
+                    <Descriptions.Item label="上次处理时间">
+                      {selectedProblem.lastHandledAt}
+                    </Descriptions.Item>
+                  )}
+                  {selectedProblem.lastHandledBy && (
+                    <Descriptions.Item label="上次处理人">
+                      {selectedProblem.lastHandledBy}
+                    </Descriptions.Item>
+                  )}
+                  {selectedProblem.previousStatus && (
+                    <Descriptions.Item label="上次状态">
+                      <span style={{ textDecoration: 'line-through', color: '#64748b' }}>
+                        {ProblemStatusLabels[selectedProblem.previousStatus]}
+                      </span>
+                    </Descriptions.Item>
+                  )}
+                  {selectedProblem.previousOpinion && (
+                    <Descriptions.Item label="上次意见" span={selectedProblem.previousStatus ? 1 : 2}>
+                      {selectedProblem.previousOpinion}
+                    </Descriptions.Item>
+                  )}
+                </Descriptions>
+              </>
+            )}
           </>
         )}
       </Drawer>

@@ -118,7 +118,7 @@ function reducer(state: AppState, action: Action): AppState {
     case 'UPDATE_PROBLEM_STATUS': {
       const problems = state.problems.map(p =>
         p.id === action.problemId
-          ? { ...p, status: action.status, handlerOpinion: action.opinion, updatedAt: new Date().toISOString().split('T')[0] }
+          ? { ...p, status: action.status, handlerOpinion: action.opinion, updatedAt: new Date().toISOString().split('T')[0], lastHandledAt: new Date().toISOString().split('T')[0], isNewProblem: false }
           : p
       );
       return { ...state, problems };
@@ -192,11 +192,12 @@ interface AppContextType {
   setWarningDays: (days: number) => void;
   saveAuditRecord: (reviewer: string, remark?: string) => AuditRecord;
   setBaselineRecord: (recordId: string | undefined) => void;
-  compareWithBaseline: () => CompareResult | null;
+  compareWithBaseline: (baselineId?: string) => CompareResult | null;
   getDuplicates: () => DuplicateFileInfo[];
   getFileById: (id: string) => LicenseFile | undefined;
   getMaterialById: (id: string) => Material | undefined;
   getAuditRecordById: (id: string) => AuditRecord | undefined;
+  getIncrementalReportContent: (compareResult: CompareResult, baselineRecord: AuditRecord) => string;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -346,6 +347,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         getFileById,
         getMaterialById,
         getAuditRecordById,
+        getIncrementalReportContent,
       }}
     >
       {children}

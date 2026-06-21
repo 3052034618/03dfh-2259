@@ -159,6 +159,10 @@ export function generateProblems(
           description: newDescription,
           severity: 'high',
           updatedAt: auditDate,
+          previousStatus: existing.previousStatus || existing.status,
+          previousOpinion: existing.previousOpinion || existing.handlerOpinion,
+          lastHandledAt: existing.lastHandledAt || (existing.status !== 'pending' ? existing.updatedAt : undefined),
+          isNewProblem: false,
         });
         existingProblemMap.delete(key);
       } else {
@@ -171,6 +175,7 @@ export function generateProblems(
           status: 'pending',
           createdAt: auditDate,
           updatedAt: auditDate,
+          isNewProblem: true,
         });
       }
     } else if (expiryCheck.status === 'warning') {
@@ -184,6 +189,10 @@ export function generateProblems(
           description: newDescription,
           severity: 'medium',
           updatedAt: auditDate,
+          previousStatus: existing.previousStatus || existing.status,
+          previousOpinion: existing.previousOpinion || existing.handlerOpinion,
+          lastHandledAt: existing.lastHandledAt || (existing.status !== 'pending' ? existing.updatedAt : undefined),
+          isNewProblem: false,
         });
         existingProblemMap.delete(key);
       } else {
@@ -196,6 +205,7 @@ export function generateProblems(
           status: 'pending',
           createdAt: auditDate,
           updatedAt: auditDate,
+          isNewProblem: true,
         });
       }
     }
@@ -211,6 +221,10 @@ export function generateProblems(
           description: newDescription,
           severity: 'high',
           updatedAt: auditDate,
+          previousStatus: existing.previousStatus || existing.status,
+          previousOpinion: existing.previousOpinion || existing.handlerOpinion,
+          lastHandledAt: existing.lastHandledAt || (existing.status !== 'pending' ? existing.updatedAt : undefined),
+          isNewProblem: false,
         });
         existingProblemMap.delete(key);
       } else {
@@ -223,6 +237,7 @@ export function generateProblems(
           status: 'pending',
           createdAt: auditDate,
           updatedAt: auditDate,
+          isNewProblem: true,
         });
       }
     }
@@ -245,6 +260,10 @@ export function generateProblems(
           description: newDescription,
           severity: 'high',
           updatedAt: auditDate,
+          previousStatus: existing.previousStatus || existing.status,
+          previousOpinion: existing.previousOpinion || existing.handlerOpinion,
+          lastHandledAt: existing.lastHandledAt || (existing.status !== 'pending' ? existing.updatedAt : undefined),
+          isNewProblem: false,
         });
         existingProblemMap.delete(key);
       } else {
@@ -258,6 +277,7 @@ export function generateProblems(
           status: 'pending',
           createdAt: auditDate,
           updatedAt: auditDate,
+          isNewProblem: true,
         });
       }
     }
@@ -270,6 +290,7 @@ export function generateProblems(
         status: 'resolved',
         updatedAt: auditDate,
         handlerOpinion: problem.handlerOpinion ? `${problem.handlerOpinion}（问题已消除）` : '问题已消除',
+        isNewProblem: false,
       });
     }
   });
@@ -539,6 +560,7 @@ export function detectDuplicates(files: LicenseFile[]): DuplicateFileInfo[] {
   const duplicates: DuplicateFileInfo[] = [];
   const nameMap = new Map<string, string[]>();
   const numberMap = new Map<string, string[]>();
+  const supplierMap = new Map<string, string[]>();
   
   files.forEach(file => {
     if (file.name) {
@@ -555,6 +577,14 @@ export function detectDuplicates(files: LicenseFile[]): DuplicateFileInfo[] {
         numberMap.set(normalizedNumber, []);
       }
       numberMap.get(normalizedNumber)!.push(file.id);
+    }
+
+    if (file.authorizedInstitution) {
+      const normalizedSupplier = file.authorizedInstitution.trim().toLowerCase();
+      if (!supplierMap.has(normalizedSupplier)) {
+        supplierMap.set(normalizedSupplier, []);
+      }
+      supplierMap.get(normalizedSupplier)!.push(file.id);
     }
   });
   
@@ -593,6 +623,29 @@ export function detectDuplicates(files: LicenseFile[]): DuplicateFileInfo[] {
               file,
               duplicateWith: sortedIds.filter((_, i) => i !== idx),
               reason: 'licenseNumber',
+            });
+          }
+        });
+      }
+    }
+  });
+
+  supplierMap.forEach((ids, supplier) => {
+    if (ids.length > 1) {
+      const groupedFiles = ids.map(id => files.find(f => f.id === id)).filter(Boolean) as LicenseFile[];
+      const types = new Set(groupedFiles.map(f => f.type));
+      if (types.size <= 1) return;
+      const sortedIds = [...ids].sort();
+      const key = 'supplier_' + sortedIds.join('_');
+      if (!processed.has(key)) {
+        processed.add(key);
+        sortedIds.forEach((id, idx) => {
+          const file = files.find(f => f.id === id);
+          if (file) {
+            duplicates.push({
+              file,
+              duplicateWith: sortedIds.filter((_, i) => i !== idx),
+              reason: 'supplier',
             });
           }
         });

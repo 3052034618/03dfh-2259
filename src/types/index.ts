@@ -64,6 +64,11 @@ export interface AuditProblem {
   handlerOpinion?: string;
   createdAt: string;
   updatedAt: string;
+  previousStatus?: ProblemStatus;
+  previousOpinion?: string;
+  lastHandledAt?: string;
+  lastHandledBy?: string;
+  isNewProblem?: boolean;
 }
 
 export interface AuditRecord {
@@ -144,7 +149,7 @@ export interface CompareResult {
 export interface DuplicateFileInfo {
   file: LicenseFile;
   duplicateWith: string[];
-  reason: 'name' | 'licenseNumber';
+  reason: 'name' | 'licenseNumber' | 'supplier';
 }
 
 export interface AppState {

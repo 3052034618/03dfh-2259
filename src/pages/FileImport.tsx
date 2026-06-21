@@ -20,6 +20,7 @@ import {
   Divider,
   Alert,
   List,
+  Collapse,
 } from 'antd';
 import {
   InboxOutlined,
@@ -35,6 +36,10 @@ import {
   ExclamationCircleOutlined,
   CloseOutlined,
   BulbOutlined,
+  SafetyCertificateOutlined,
+  BankOutlined,
+  SolutionOutlined,
+  ApartmentOutlined,
 } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
 import { useApp } from '../context/AppContext';
@@ -153,6 +158,144 @@ const FileImport: React.FC = () => {
 
   const duplicates = useMemo(() => getDuplicates(), [state.files]);
   const duplicateFileIds = useMemo(() => new Set(duplicates.map(d => d.file.id)), [duplicates]);
+
+  const typeOrder: LicenseType[] = ['registration_certificate', 'business_license', 'medical_device_license', 'authorization_chain'];
+  const typeIcons: Record<LicenseType, React.ReactNode> = {
+    registration_certificate: <SafetyCertificateOutlined style={{ color: '#60a5fa' }} />,
+    business_license: <BankOutlined style={{ color: '#52c41a' }} />,
+    medical_device_license: <SolutionOutlined style={{ color: '#faad14' }} />,
+    authorization_chain: <ApartmentOutlined style={{ color: '#722ed1' }} />,
+  };
+  const typeTagColors: Record<LicenseType, string> = {
+    registration_certificate: 'blue',
+    business_license: 'green',
+    medical_device_license: 'orange',
+    authorization_chain: 'purple',
+  };
+
+  const groupedFiles = useMemo(() => {
+    const groups: Record<LicenseType, LicenseFile[]> = {
+      registration_certificate: [],
+      business_license: [],
+      medical_device_license: [],
+      authorization_chain: [],
+    };
+    state.files.forEach(f => {
+      groups[f.type].push(f);
+    });
+    typeOrder.forEach(type => {
+      groups[type].sort((a, b) => {
+        const order: Record<FileStatus, number> = { pending: 0, matched: 1, reviewed: 2 };
+        return (order[a.status] ?? 3) - (order[b.status] ?? 3);
+      });
+    });
+    return groups;
+  }, [state.files]);
+
+  const batchColumns = [
+    {
+      title: '证照名称',
+      dataIndex: 'name',
+      key: 'name',
+      ellipsis: true,
+      render: (text: string, record: LicenseFile) => (
+        <Space>
+          <FileTextOutlined style={{ color: '#60a5fa' }} />
+          <span style={{ cursor: 'pointer' }} onClick={() => handleEdit(record)}>{text}</span>
+        </Space>
+      ),
+    },
+    {
+      title: '编号',
+      dataIndex: 'licenseNumber',
+      key: 'licenseNumber',
+      width: 180,
+      render: (text?: string) => text || <span style={{ color: '#64748b' }}>未填写</span>,
+    },
+    {
+      title: '有效期',
+      dataIndex: 'expiryDate',
+      key: 'expiryDate',
+      width: 120,
+      render: (text?: string) => {
+        if (!text) return <span style={{ color: '#64748b' }}>未填写</span>;
+        return <span>{text}</span>;
+      },
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 80,
+      render: (status: FileStatus) => <Tag color={statusColors[status]}>{statusLabels[status]}</Tag>,
+    },
+  ];
+
+  const reasonLabels: Record<string, { label: string; color: string }> = {
+    name: { label: '同名重复', color: 'orange' },
+    licenseNumber: { label: '同编号重复', color: 'red' },
+    supplier: { label: '同供应商重复', color: 'purple' },
+  };
+
+  const duplicateColumns = [
+    {
+      title: '文件名',
+      dataIndex: ['file', 'name'],
+      key: 'fileName',
+      width: 200,
+      ellipsis: true,
+    },
+    {
+      title: '重复原因',
+      dataIndex: 'reason',
+      key: 'reason',
+      width: 120,
+      render: (reason: string) => {
+        const info = reasonLabels[reason] || { label: reason, color: 'default' };
+        return <Tag color={info.color}>{info.label}</Tag>;
+      },
+    },
+    {
+      title: '重复对象',
+      dataIndex: 'duplicateWith',
+      key: 'duplicateWith',
+      render: (ids: string[]) => (
+        <Space wrap>
+          {ids.map(id => {
+            const f = getFileById(id);
+            return f ? <Tag key={id} color="red">{f.name}</Tag> : null;
+          })}
+        </Space>
+      ),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 160,
+      render: (_: any, record: DuplicateFileInfo) => (
+        <Space size="small">
+          <Button type="link" size="small" icon={<CheckCircleOutlined />} onClick={() => handleDelete(record.file.id)}>
+            确认保留
+          </Button>
+          <Popconfirm title="确认删除该重复项？" onConfirm={() => handleDelete(record.file.id)} okText="确认" cancelText="取消">
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
+  const handleRetainAll = () => {
+    message.success('已保留全部重复项');
+  };
+
+  const handleDeleteAllDuplicates = () => {
+    const uniqueIds = [...new Set(duplicates.map(d => d.file.id))];
+    uniqueIds.forEach(id => deleteFile(id));
+    message.success(`已删除 ${uniqueIds.length} 个重复项`);
+  };
 
   const statusColors: Record<FileStatus, string> = {
     pending: 'orange',
@@ -436,6 +579,79 @@ const FileImport: React.FC = () => {
         />
       </Card>
 
+      <Card
+        style={{ background: '#1e293b', border: '1px solid #334155', marginBottom: 16 }}
+        title={
+          <Space>
+            <FileProtectOutlined style={{ color: '#60a5fa' }} />
+            <span>导入批次视图</span>
+            <Tag color="blue">{state.files.length} 个文件</Tag>
+          </Space>
+        }
+      >
+        <Collapse
+          defaultActiveKey={typeOrder}
+          style={{ background: 'transparent', border: 'none' }}
+          items={typeOrder.map(type => {
+            const files = groupedFiles[type];
+            return {
+              key: type,
+              label: (
+                <Space>
+                  {typeIcons[type]}
+                  <span>{LicenseTypeLabels[type]}</span>
+                  <Tag color={typeTagColors[type]}>{files.length}</Tag>
+                </Space>
+              ),
+              children: (
+                <Table
+                  columns={batchColumns}
+                  dataSource={files}
+                  rowKey="id"
+                  size="small"
+                  pagination={false}
+                  locale={{ emptyText: '暂无该类型文件' }}
+                />
+              ),
+              style: { background: '#0f172a', border: '1px solid #334155', marginBottom: 8, borderRadius: 4 },
+            };
+          })}
+        />
+      </Card>
+
+      {duplicates.length > 0 && (
+        <Card
+          style={{ background: '#1e293b', border: '1px solid #7f1d1d', marginBottom: 16 }}
+          title={
+            <Space>
+              <WarningOutlined style={{ color: '#ff4d4f' }} />
+              <span>待确认重复项</span>
+              <Tag color="red">{duplicates.length}</Tag>
+            </Space>
+          }
+          extra={
+            <Space>
+              <Button size="small" icon={<CheckCircleOutlined />} onClick={handleRetainAll}>
+                全部保留
+              </Button>
+              <Popconfirm title="确认删除全部重复项？" onConfirm={handleDeleteAllDuplicates} okText="确认" cancelText="取消">
+                <Button size="small" danger icon={<DeleteOutlined />}>
+                  全部删除重复
+                </Button>
+              </Popconfirm>
+            </Space>
+          }
+        >
+          <Table
+            columns={duplicateColumns}
+            dataSource={duplicates}
+            rowKey={record => record.file.id + '_' + record.reason}
+            size="small"
+            pagination={false}
+          />
+        </Card>
+      )}
+
       <Modal
         title="编辑证照信息"
         open={editModalVisible}
@@ -554,8 +770,8 @@ const FileImport: React.FC = () => {
                 <div style={{ width: '100%' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                     <Space>
-                      <Tag color={item.reason === 'name' ? 'orange' : 'red'}>
-                        {item.reason === 'name' ? '同名重复' : '同编号重复'}
+                      <Tag color={item.reason === 'name' ? 'orange' : item.reason === 'supplier' ? 'purple' : 'red'}>
+                        {item.reason === 'name' ? '同名重复' : item.reason === 'supplier' ? '同供应商重复' : '同编号重复'}
                       </Tag>
                       <span style={{ fontWeight: 500 }}>{item.file.name}</span>
                     </Space>

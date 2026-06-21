@@ -55,6 +55,7 @@ import {
   MaterialCategoryLabels,
   LicenseTypeLabels,
   AuditRecord,
+  AuditProblem,
   LicenseFile,
   ProblemType,
   ProblemTypeLabels,
@@ -78,6 +79,7 @@ const ArchiveExport: React.FC = () => {
   const [selectedRecord, setSelectedRecord] = useState<AuditRecord | null>(null);
   const [recordDetailVisible, setRecordDetailVisible] = useState(false);
   const [exportFormat, setExportFormat] = useState<'excel' | 'txt'>('excel');
+  const [incrementalFormat, setIncrementalFormat] = useState<'excel' | 'txt'>('excel');
   const [selectedBaselineId, setSelectedBaselineId] = useState<string | undefined>(state.baselineRecordId);
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
   const [compareTab, setCompareTab] = useState<'files' | 'materials' | 'problems'>('files');
@@ -357,7 +359,7 @@ const ArchiveExport: React.FC = () => {
       return;
     }
 
-    if (exportFormat === 'txt') {
+    if (incrementalFormat === 'txt') {
       const content = getIncrementalReportContent(compareResult, baselineRecord);
       const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -383,49 +385,43 @@ const ArchiveExport: React.FC = () => {
       const ws1 = XLSX.utils.aoa_to_sheet(summaryData);
       XLSX.utils.book_append_sheet(wb, ws1, '复核摘要');
 
-      if (compareResult.files.length > 0) {
-        const fileData: any[][] = [
-          ['变化类型', '证照名称', '变化字段', '原值', '新值'],
-          ...compareResult.files.map(d => [
-            DiffTypeLabels[d.diffType],
-            d.fileName,
-            d.changedField ? FileFieldLabels[d.changedField] || d.changedField : '-',
-            d.oldValue || '-',
-            d.newValue || '-',
-          ]),
-        ];
-        const ws2 = XLSX.utils.aoa_to_sheet(fileData);
-        XLSX.utils.book_append_sheet(wb, ws2, '证照变化');
-      }
+      const fileData: any[][] = [
+        ['变化类型', '证照名称', '变化字段', '原值', '新值'],
+        ...compareResult.files.map(d => [
+          DiffTypeLabels[d.diffType],
+          d.fileName,
+          d.changedField ? FileFieldLabels[d.changedField] || d.changedField : '-',
+          d.oldValue || '-',
+          d.newValue || '-',
+        ]),
+      ];
+      const ws2 = XLSX.utils.aoa_to_sheet(fileData);
+      XLSX.utils.book_append_sheet(wb, ws2, '证照变化');
 
-      if (compareResult.materials.length > 0) {
-        const materialData: any[][] = [
-          ['变化类型', '材料名称', '变化字段', '原值', '新值'],
-          ...compareResult.materials.map(d => [
-            DiffTypeLabels[d.diffType],
-            d.materialName,
-            d.changedField ? MaterialFieldLabels[d.changedField] || d.changedField : '-',
-            d.oldValue || '-',
-            d.newValue || '-',
-          ]),
-        ];
-        const ws3 = XLSX.utils.aoa_to_sheet(materialData);
-        XLSX.utils.book_append_sheet(wb, ws3, '材料变化');
-      }
+      const materialData: any[][] = [
+        ['变化类型', '材料名称', '变化字段', '原值', '新值'],
+        ...compareResult.materials.map(d => [
+          DiffTypeLabels[d.diffType],
+          d.materialName,
+          d.changedField ? MaterialFieldLabels[d.changedField] || d.changedField : '-',
+          d.oldValue || '-',
+          d.newValue || '-',
+        ]),
+      ];
+      const ws3 = XLSX.utils.aoa_to_sheet(materialData);
+      XLSX.utils.book_append_sheet(wb, ws3, '材料变化');
 
-      if (compareResult.problems.length > 0) {
-        const problemData: any[][] = [
-          ['变化类型', '问题类型', '风险等级', '描述'],
-          ...compareResult.problems.map(d => [
-            DiffTypeLabels[d.diffType],
-            ProblemTypeLabels[d.problemType],
-            d.severity === 'high' ? '高风险' : d.severity === 'medium' ? '中风险' : '低风险',
-            d.description,
-          ]),
-        ];
-        const ws4 = XLSX.utils.aoa_to_sheet(problemData);
-        XLSX.utils.book_append_sheet(wb, ws4, '风险变化');
-      }
+      const problemData: any[][] = [
+        ['变化类型', '问题类型', '风险等级', '描述'],
+        ...compareResult.problems.map(d => [
+          DiffTypeLabels[d.diffType],
+          ProblemTypeLabels[d.problemType],
+          d.severity === 'high' ? '高风险' : d.severity === 'medium' ? '中风险' : '低风险',
+          d.description,
+        ]),
+      ];
+      const ws4 = XLSX.utils.aoa_to_sheet(problemData);
+      XLSX.utils.book_append_sheet(wb, ws4, '风险变化');
 
       XLSX.writeFile(wb, `增量复核报告_${state.currentAuditDate}.xlsx`);
       message.success('增量复核报告已导出');
@@ -703,8 +699,8 @@ const ArchiveExport: React.FC = () => {
               <Space>
                 <Radio.Group
                   size="small"
-                  value={exportFormat}
-                  onChange={e => setExportFormat(e.target.value)}
+                  value={incrementalFormat}
+                  onChange={e => setIncrementalFormat(e.target.value)}
                   optionType="button"
                   buttonStyle="solid"
                 >
@@ -1137,29 +1133,129 @@ const ArchiveExport: React.FC = () => {
       </Modal>
 
       <Drawer
-        title="审查记录详情"
-        width={560}
+        title={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingRight: 32 }}>
+            <span>审查记录详情</span>
+            <Button
+              type="primary"
+              size="small"
+              icon={<DiffOutlined />}
+              onClick={() => {
+                if (!selectedRecord) return;
+                setBaselineRecord(selectedRecord.id);
+                setSelectedBaselineId(selectedRecord.id);
+                const result = compareWithBaseline(selectedRecord.id);
+                setCompareResult(result);
+                setRecordDetailVisible(false);
+                message.success('已设为对比基准并完成对比');
+              }}
+            >
+              设为对比基准
+            </Button>
+          </div>
+        }
+        width={640}
         open={recordDetailVisible}
         onClose={() => setRecordDetailVisible(false)}
       >
         {selectedRecord && (
-          <>
-            <Card size="small" style={{ marginBottom: 16 }}>
-              <Descriptions size="small" column={2} labelStyle={{ color: '#64748b' }}>
-                <Descriptions.Item label="审查日期">{selectedRecord.date}</Descriptions.Item>
-                <Descriptions.Item label="审查人员">{selectedRecord.reviewer}</Descriptions.Item>
-                <Descriptions.Item label="证照文件">{selectedRecord.totalFiles} 份</Descriptions.Item>
-                <Descriptions.Item label="材料种类">{selectedRecord.totalMaterials} 种</Descriptions.Item>
-                <Descriptions.Item label="问题总数">{selectedRecord.problemsCount} 个</Descriptions.Item>
-                <Descriptions.Item label="已解决">{selectedRecord.resolvedCount} 个</Descriptions.Item>
-              </Descriptions>
-            </Card>
-            {selectedRecord.remark && (
-              <Card size="small" title="备注">
-                {selectedRecord.remark}
+          <Tabs defaultActiveKey="overview" size="small">
+            <TabPane
+              tab="概览"
+              key="overview"
+            >
+              <Card size="small" style={{ marginBottom: 16 }}>
+                <Descriptions size="small" column={2} labelStyle={{ color: '#64748b' }}>
+                  <Descriptions.Item label="审查日期">{selectedRecord.date}</Descriptions.Item>
+                  <Descriptions.Item label="审查人员">{selectedRecord.reviewer}</Descriptions.Item>
+                  <Descriptions.Item label="证照文件">{selectedRecord.totalFiles} 份</Descriptions.Item>
+                  <Descriptions.Item label="材料种类">{selectedRecord.totalMaterials} 种</Descriptions.Item>
+                  <Descriptions.Item label="问题总数">{selectedRecord.problemsCount} 个</Descriptions.Item>
+                  <Descriptions.Item label="已解决">{selectedRecord.resolvedCount} 个</Descriptions.Item>
+                </Descriptions>
               </Card>
-            )}
-          </>
+              {selectedRecord.remark && (
+                <Card size="small" title="备注">
+                  {selectedRecord.remark}
+                </Card>
+              )}
+            </TabPane>
+
+            <TabPane
+              tab={`证照快照 (${selectedRecord.snapshot.files.length})`}
+              key="files"
+            >
+              <Table
+                size="small"
+                dataSource={selectedRecord.snapshot.files}
+                rowKey="id"
+                pagination={false}
+                scroll={{ y: 400 }}
+                columns={[
+                  { title: '证照名称', dataIndex: 'name', key: 'name', width: 160 },
+                  { title: '类型', key: 'type', width: 120, render: (_: any, r: LicenseFile) => LicenseTypeLabels[r.type] },
+                  { title: '编号', dataIndex: 'licenseNumber', key: 'licenseNumber', width: 120, render: (v?: string) => v || '-' },
+                  { title: '有效期至', dataIndex: 'expiryDate', key: 'expiryDate', width: 110, render: (v?: string) => v || '-' },
+                  { title: '签发机关', dataIndex: 'issuer', key: 'issuer', width: 120, render: (v?: string) => v || '-' },
+                  { title: '状态', key: 'status', width: 80, render: (_: any, r: LicenseFile) => (
+                    <Tag color={r.status === 'reviewed' ? 'green' : r.status === 'matched' ? 'blue' : 'orange'}>
+                      {r.status === 'reviewed' ? '已审核' : r.status === 'matched' ? '已匹配' : '待处理'}
+                    </Tag>
+                  )},
+                ]}
+              />
+            </TabPane>
+
+            <TabPane
+              tab={`材料快照 (${selectedRecord.snapshot.materials.length})`}
+              key="materials"
+            >
+              <Table
+                size="small"
+                dataSource={selectedRecord.snapshot.materials}
+                rowKey="id"
+                pagination={false}
+                scroll={{ y: 400 }}
+                columns={[
+                  { title: '材料名称', dataIndex: 'name', key: 'name', width: 160 },
+                  { title: '分类', key: 'category', width: 100, render: (_: any, r: Material) => MaterialCategoryLabels[r.category] },
+                  { title: '规格', dataIndex: 'specification', key: 'specification', width: 100, render: (v?: string) => v || '-' },
+                  { title: '生产厂家', dataIndex: 'manufacturer', key: 'manufacturer', width: 140, render: (v?: string) => v || '-' },
+                  { title: '供应商', dataIndex: 'supplier', key: 'supplier', width: 120, render: (v?: string) => v || '-' },
+                  { title: '关联证照', key: 'licenseFiles', width: 80, render: (_: any, r: Material) => (
+                    <Tag color={r.licenseFiles.length > 0 ? 'green' : 'orange'}>{r.licenseFiles.length} 份</Tag>
+                  )},
+                ]}
+              />
+            </TabPane>
+
+            <TabPane
+              tab={`问题快照 (${selectedRecord.snapshot.problems.length})`}
+              key="problems"
+            >
+              <Table
+                size="small"
+                dataSource={selectedRecord.snapshot.problems}
+                rowKey="id"
+                pagination={false}
+                scroll={{ y: 400 }}
+                columns={[
+                  { title: '问题类型', key: 'type', width: 120, render: (_: any, r: AuditProblem) => ProblemTypeLabels[r.type] },
+                  { title: '风险等级', key: 'severity', width: 80, render: (_: any, r: AuditProblem) => (
+                    <Tag color={r.severity === 'high' ? 'red' : r.severity === 'medium' ? 'orange' : 'blue'}>
+                      {r.severity === 'high' ? '高风险' : r.severity === 'medium' ? '中风险' : '低风险'}
+                    </Tag>
+                  )},
+                  { title: '状态', key: 'status', width: 80, render: (_: any, r: AuditProblem) => (
+                    <Tag color={r.status === 'resolved' ? 'green' : r.status === 'processing' ? 'blue' : 'orange'}>
+                      {r.status === 'resolved' ? '已解决' : r.status === 'processing' ? '处理中' : '待处理'}
+                    </Tag>
+                  )},
+                  { title: '描述', dataIndex: 'description', key: 'description', ellipsis: true },
+                ]}
+              />
+            </TabPane>
+          </Tabs>
         )}
       </Drawer>
     </div>
