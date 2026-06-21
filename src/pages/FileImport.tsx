@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   Upload,
   Table,
@@ -18,6 +18,8 @@ import {
   Row,
   Col,
   Divider,
+  Alert,
+  List,
 } from 'antd';
 import {
   InboxOutlined,
@@ -29,6 +31,10 @@ import {
   FileProtectOutlined,
   PaperClipOutlined,
   SearchOutlined,
+  WarningOutlined,
+  ExclamationCircleOutlined,
+  CloseOutlined,
+  BulbOutlined,
 } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
 import { useApp } from '../context/AppContext';
@@ -37,6 +43,7 @@ import {
   LicenseTypeLabels,
   FileStatus,
   LicenseFile,
+  DuplicateFileInfo,
 } from '../types';
 import { formatFileSize, detectLicenseType } from '../utils/storage';
 import dayjs from 'dayjs';
@@ -46,18 +53,42 @@ const { Option } = Select;
 const { TextArea } = Input;
 
 const FileImport: React.FC = () => {
-  const { state, addFiles, updateFile, deleteFile } = useApp();
+  const { state, addFiles, updateFile, deleteFile, getDuplicates, getFileById } = useApp();
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingFile, setEditingFile] = useState<LicenseFile | null>(null);
   const [form] = Form.useForm();
   const [searchText, setSearchText] = useState('');
+  const [duplicateModalVisible, setDuplicateModalVisible] = useState(false);
+  const [newDuplicates, setNewDuplicates] = useState<DuplicateFileInfo[]>([]);
+  const [lastImportResult, setLastImportResult] = useState<{ count: number; autoDetected: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpload: UploadProps['customRequest'] = (options: any) => {
     const { file, fileList } = options;
     const files = fileList?.map((f: any) => f.originFileObj as File) || [file as File];
-    addFiles(files.filter(Boolean));
-    message.success(`成功导入 ${files.filter(Boolean).length} 个文件`);
+    const validFiles = files.filter(Boolean);
+    
+    const result = addFiles(validFiles);
+    
+    let autoDetected = 0;
+    setTimeout(() => {
+      validFiles.forEach((f: File) => {
+        const detected = detectLicenseType(f.name);
+        if (detected !== 'registration_certificate') {
+          autoDetected++;
+        }
+      });
+      
+      if (result.duplicates.length > 0) {
+        setNewDuplicates(result.duplicates);
+        setDuplicateModalVisible(true);
+      }
+      
+      setLastImportResult({ count: result.addedCount, autoDetected });
+      message.success(`成功导入 ${result.addedCount} 个文件${autoDetected > 0 ? `，已智能识别 ${autoDetected} 个证照类型` : ''}`);
+      
+      setTimeout(() => setLastImportResult(null), 5000);
+    }, 200);
   };
 
   const handleEdit = (file: LicenseFile) => {
@@ -120,6 +151,9 @@ const FileImport: React.FC = () => {
     file.licenseNumber?.includes(searchText)
   );
 
+  const duplicates = useMemo(() => getDuplicates(), [state.files]);
+  const duplicateFileIds = useMemo(() => new Set(duplicates.map(d => d.file.id)), [duplicates]);
+
   const statusColors: Record<FileStatus, string> = {
     pending: 'orange',
     matched: 'blue',
@@ -130,6 +164,10 @@ const FileImport: React.FC = () => {
     pending: '待处理',
     matched: '已匹配',
     reviewed: '已审核',
+  };
+
+  const getFileDuplicateInfo = (fileId: string) => {
+    return duplicates.filter(d => d.file.id === fileId);
   };
 
   const columns = [
@@ -144,6 +182,17 @@ const FileImport: React.FC = () => {
           <span style={{ cursor: 'pointer' }} onClick={() => handleEdit(record)}>
             {text}
           </span>
+          {duplicateFileIds.has(record.id) && (
+            <Tooltip title="检测到重复证照，点击查看">
+              <ExclamationCircleOutlined
+                style={{ color: '#faad14', cursor: 'pointer' }}
+                onClick={() => {
+                  setNewDuplicates(getFileDuplicateInfo(record.id));
+                  setDuplicateModalVisible(true);
+                }}
+              />
+            </Tooltip>
+          )}
         </Space>
       ),
     },
@@ -234,11 +283,31 @@ const FileImport: React.FC = () => {
   const pendingCount = state.files.filter(f => f.status === 'pending').length;
   const reviewedCount = state.files.filter(f => f.status === 'reviewed').length;
   const matchedCount = state.files.filter(f => f.status === 'matched').length;
+  const duplicateCount = new Set(duplicates.map(d => d.file.id)).size;
 
   return (
     <div style={{ padding: '16px 0' }}>
+      {lastImportResult && (
+        <Alert
+          message={
+            <Space>
+              <BulbOutlined />
+              <span>
+                成功导入 {lastImportResult.count} 个文件
+                {lastImportResult.autoDetected > 0 && `，已智能识别 ${lastImportResult.autoDetected} 个证照类型`}
+              </span>
+            </Space>
+          }
+          type="success"
+          showIcon
+          closable
+          onClose={() => setLastImportResult(null)}
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
       <Row gutter={16} style={{ marginBottom: 20 }}>
-        <Col span={6}>
+        <Col span={5}>
           <Card style={{ background: '#0f172a', border: '1px solid #334155' }}>
             <Statistic
               title="文件总数"
@@ -248,7 +317,7 @@ const FileImport: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col span={5}>
           <Card style={{ background: '#0f172a', border: '1px solid #334155' }}>
             <Statistic
               title="待处理"
@@ -258,7 +327,7 @@ const FileImport: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col span={5}>
           <Card style={{ background: '#0f172a', border: '1px solid #334155' }}>
             <Statistic
               title="已匹配"
@@ -268,13 +337,28 @@ const FileImport: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col span={5}>
           <Card style={{ background: '#0f172a', border: '1px solid #334155' }}>
             <Statistic
               title="已审核"
               value={reviewedCount}
               prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
               valueStyle={{ color: '#52c41a' }}
+            />
+          </Card>
+        </Col>
+        <Col span={4}>
+          <Card
+            style={{
+              background: duplicateCount > 0 ? '#7f1d1d30' : '#0f172a',
+              border: `1px solid ${duplicateCount > 0 ? '#7f1d1d' : '#334155'}`,
+            }}
+          >
+            <Statistic
+              title="重复证照"
+              value={duplicateCount}
+              prefix={<WarningOutlined style={{ color: duplicateCount > 0 ? '#ff4d4f' : '#64748b' }} />}
+              valueStyle={{ color: duplicateCount > 0 ? '#ff4d4f' : '#64748b' }}
             />
           </Card>
         </Col>
@@ -298,6 +382,10 @@ const FileImport: React.FC = () => {
             支持批量导入注册证、营业执照、医疗器械经营许可证、授权链文件等
             <br />
             支持 PDF、JPG、PNG、Word 等格式
+            <br />
+            <span style={{ color: '#90cdf4' }}>
+              <BulbOutlined /> 系统将按文件名自动识别证照类型，并检测重复
+            </span>
           </p>
         </Dragger>
       </Card>
@@ -308,6 +396,11 @@ const FileImport: React.FC = () => {
           <Space>
             <span>文件列表</span>
             <Tag color="blue">{state.files.length} 个文件</Tag>
+            {duplicateCount > 0 && (
+              <Tag color="orange" icon={<WarningOutlined />}>
+                {duplicateCount} 个重复
+              </Tag>
+            )}
           </Space>
         }
         extra={
@@ -425,6 +518,83 @@ const FileImport: React.FC = () => {
             <TextArea rows={2} placeholder="备注信息" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={
+          <Space>
+            <WarningOutlined style={{ color: '#faad14' }} />
+            <span>重复证照提醒</span>
+          </Space>
+        }
+        open={duplicateModalVisible}
+        onOk={() => setDuplicateModalVisible(false)}
+        onCancel={() => setDuplicateModalVisible(false)}
+        width={600}
+        okText="知道了"
+        cancelText="关闭"
+      >
+        <div style={{ marginBottom: 12, color: '#94a3b8' }}>
+          检测到以下证照可能存在重复，请核对后处理：
+        </div>
+        <List
+          dataSource={newDuplicates}
+          renderItem={(item, idx) => {
+            const duplicateFiles = item.duplicateWith.map(id => getFileById(id)).filter(Boolean);
+            return (
+              <List.Item
+                style={{
+                  padding: '12px 16px',
+                  marginBottom: 8,
+                  background: '#0f172a',
+                  borderRadius: 4,
+                  border: '1px solid #92400e50',
+                }}
+              >
+                <div style={{ width: '100%' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <Space>
+                      <Tag color={item.reason === 'name' ? 'orange' : 'red'}>
+                        {item.reason === 'name' ? '同名重复' : '同编号重复'}
+                      </Tag>
+                      <span style={{ fontWeight: 500 }}>{item.file.name}</span>
+                    </Space>
+                    <Button
+                      type="link"
+                      size="small"
+                      danger
+                      icon={<CloseOutlined />}
+                      onClick={() => handleDelete(item.file.id)}
+                    >
+                      删除此文件
+                    </Button>
+                  </div>
+                  {item.file.licenseNumber && (
+                    <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>
+                      证照编号：{item.file.licenseNumber}
+                    </div>
+                  )}
+                  {duplicateFiles.length > 0 && (
+                    <div style={{ fontSize: 12, color: '#f87171' }}>
+                      与以下文件重复：
+                      <Space wrap style={{ marginLeft: 8 }}>
+                        {duplicateFiles.map(f => (
+                          <Tag key={f!.id} color="red" style={{ fontSize: 11 }}>
+                            {f!.name}
+                          </Tag>
+                        ))}
+                      </Space>
+                    </div>
+                  )}
+                </div>
+              </List.Item>
+            );
+          }}
+        />
+        <div style={{ marginTop: 12, fontSize: 12, color: '#64748b', padding: 12, background: '#1e293b', borderRadius: 4 }}>
+          <BulbOutlined style={{ marginRight: 4 }} />
+          提示：同名或同编号证照可能是同一文件多次导入，建议删除重复项。
+        </div>
       </Modal>
     </div>
   );

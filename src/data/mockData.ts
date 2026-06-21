@@ -162,6 +162,14 @@ export const mockAuditRecords: AuditRecord[] = [
     problemsCount: 3,
     resolvedCount: 2,
     remark: '季度例行审查',
+    snapshot: {
+      files: [...mockFiles.slice(0, 5)],
+      materials: [...mockMaterials.slice(0, 2)],
+      problems: [],
+      auditDate: '2024-01-15',
+      institutionName: '美好医疗美容门诊部',
+      warningDays: 90,
+    },
   },
   {
     id: generateId(),
@@ -172,5 +180,13 @@ export const mockAuditRecords: AuditRecord[] = [
     problemsCount: 4,
     resolvedCount: 4,
     remark: '上半年审查',
+    snapshot: {
+      files: [...mockFiles],
+      materials: [...mockMaterials],
+      problems: [],
+      auditDate: '2024-04-20',
+      institutionName: '美好医疗美容门诊部',
+      warningDays: 90,
+    },
   },
 ];

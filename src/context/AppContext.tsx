@@ -6,6 +6,8 @@ import {
   AuditProblem,
   AuditRecord,
   ProblemStatus,
+  CompareResult,
+  DuplicateFileInfo,
 } from '../types';
 import {
   loadState,
@@ -14,6 +16,10 @@ import {
   generateProblems,
   createAuditRecord,
   defaultState,
+  detectLicenseType,
+  compareWithBaseline as compareSnapshots,
+  detectDuplicates,
+  getIncrementalReportContent,
 } from '../utils/storage';
 import { mockFiles, mockMaterials, mockAuditRecords } from '../data/mockData';
 
@@ -32,6 +38,7 @@ type Action =
   | { type: 'SET_INSTITUTION_NAME'; name: string }
   | { type: 'SET_WARNING_DAYS'; days: number }
   | { type: 'ADD_AUDIT_RECORD'; record: AuditRecord; reviewer: string; remark?: string }
+  | { type: 'SET_BASELINE_RECORD'; recordId: string | undefined }
   | { type: 'LOAD_LAST_AUDIT'; recordId: string }
   | { type: 'RESET_STATE' };
 
@@ -58,7 +65,8 @@ function reducer(state: AppState, action: Action): AppState {
         newState.materials,
         newState.institutionName,
         newState.currentAuditDate,
-        newState.warningDays
+        newState.warningDays,
+        []
       );
       return { ...newState, problems };
     }
@@ -122,7 +130,8 @@ function reducer(state: AppState, action: Action): AppState {
         state.materials,
         state.institutionName,
         state.currentAuditDate,
-        state.warningDays
+        state.warningDays,
+        state.problems
       );
       return { ...state, problems };
     }
@@ -139,11 +148,16 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, warningDays: action.days };
     }
 
+    case 'SET_BASELINE_RECORD': {
+      return { ...state, baselineRecordId: action.recordId };
+    }
+
     case 'ADD_AUDIT_RECORD': {
       return {
         ...state,
         auditRecords: [...state.auditRecords, action.record],
         lastAuditRecordId: action.record.id,
+        baselineRecordId: action.record.id,
       };
     }
 
@@ -165,7 +179,7 @@ function reducer(state: AppState, action: Action): AppState {
 interface AppContextType {
   state: AppState;
   dispatch: React.Dispatch<Action>;
-  addFiles: (files: File[]) => void;
+  addFiles: (files: File[]) => { duplicates: DuplicateFileInfo[]; addedCount: number };
   updateFile: (file: LicenseFile) => void;
   deleteFile: (fileId: string) => void;
   addMaterial: (material: Omit<Material, 'id' | 'licenseFiles'>) => void;
@@ -177,8 +191,12 @@ interface AppContextType {
   setInstitutionName: (name: string) => void;
   setWarningDays: (days: number) => void;
   saveAuditRecord: (reviewer: string, remark?: string) => AuditRecord;
+  setBaselineRecord: (recordId: string | undefined) => void;
+  compareWithBaseline: () => CompareResult | null;
+  getDuplicates: () => DuplicateFileInfo[];
   getFileById: (id: string) => LicenseFile | undefined;
   getMaterialById: (id: string) => Material | undefined;
+  getAuditRecordById: (id: string) => AuditRecord | undefined;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -196,17 +214,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [state]);
 
-  const addFiles = (fileList: File[]) => {
+  const addFiles = (fileList: File[]): { duplicates: DuplicateFileInfo[]; addedCount: number } => {
     const newFiles: LicenseFile[] = fileList.map(file => ({
       id: generateId(),
       name: file.name,
-      type: 'registration_certificate',
+      type: detectLicenseType(file.name),
       fileSize: file.size,
       uploadTime: new Date().toISOString().split('T')[0],
       status: 'pending',
     }));
+    
+    const allFiles = [...state.files, ...newFiles];
+    const allDuplicates = detectDuplicates(allFiles);
+    const newDuplicates = allDuplicates.filter(d => 
+      newFiles.some(nf => nf.id === d.file.id)
+    );
+    
     dispatch({ type: 'ADD_FILES', files: newFiles });
     setTimeout(() => dispatch({ type: 'RUN_AUDIT' }), 100);
+    
+    return {
+      duplicates: newDuplicates,
+      addedCount: newFiles.length,
+    };
   };
 
   const updateFile = (file: LicenseFile) => {
@@ -266,9 +296,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return record;
   };
 
+  const setBaselineRecord = (recordId: string | undefined) => {
+    dispatch({ type: 'SET_BASELINE_RECORD', recordId });
+  };
+
+  const compareWithBaseline = (baselineId?: string): CompareResult | null => {
+    const baselineRecordId = baselineId || state.baselineRecordId;
+    if (!baselineRecordId) return null;
+    
+    const baselineRecord = state.auditRecords.find(r => r.id === baselineRecordId);
+    if (!baselineRecord || !baselineRecord.snapshot) return null;
+    
+    return compareSnapshots(
+      { files: state.files, materials: state.materials, problems: state.problems },
+      baselineRecord.snapshot
+    );
+  };
+
+  const getDuplicates = (): DuplicateFileInfo[] => {
+    return detectDuplicates(state.files);
+  };
+
   const getFileById = (id: string) => state.files.find(f => f.id === id);
 
   const getMaterialById = (id: string) => state.materials.find(m => m.id === id);
+
+  const getAuditRecordById = (id: string) => state.auditRecords.find(r => r.id === id);
 
   return (
     <AppContext.Provider
@@ -287,8 +340,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setInstitutionName,
         setWarningDays,
         saveAuditRecord,
+        setBaselineRecord,
+        compareWithBaseline,
+        getDuplicates,
         getFileById,
         getMaterialById,
+        getAuditRecordById,
       }}
     >
       {children}

@@ -20,6 +20,9 @@ import {
   Timeline,
   Radio,
   Drawer,
+  Select,
+  Alert,
+  Tabs,
 } from 'antd';
 import {
   InboxOutlined,
@@ -39,6 +42,11 @@ import {
   CalendarOutlined,
   ReloadOutlined,
   DownloadOutlined,
+  PlusOutlined,
+  MinusOutlined,
+  EditOutlined,
+  DiffOutlined,
+  BulbOutlined,
 } from '@ant-design/icons';
 import { useApp } from '../context/AppContext';
 import {
@@ -50,19 +58,29 @@ import {
   LicenseFile,
   ProblemType,
   ProblemTypeLabels,
+  CompareResult,
+  DiffType,
+  DiffTypeLabels,
+  FileFieldLabels,
+  MaterialFieldLabels,
 } from '../types';
 import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
 
 const { TextArea } = Input;
+const { Option } = Select;
+const { TabPane } = Tabs;
 
 const ArchiveExport: React.FC = () => {
-  const { state, saveAuditRecord, getFileById, getMaterialById } = useApp();
+  const { state, saveAuditRecord, getFileById, getMaterialById, compareWithBaseline, setBaselineRecord, getAuditRecordById, getIncrementalReportContent } = useApp();
   const [recordModalVisible, setRecordModalVisible] = useState(false);
   const [recordForm] = Form.useForm();
   const [selectedRecord, setSelectedRecord] = useState<AuditRecord | null>(null);
   const [recordDetailVisible, setRecordDetailVisible] = useState(false);
   const [exportFormat, setExportFormat] = useState<'excel' | 'txt'>('excel');
+  const [selectedBaselineId, setSelectedBaselineId] = useState<string | undefined>(state.baselineRecordId);
+  const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
+  const [compareTab, setCompareTab] = useState<'files' | 'materials' | 'problems'>('files');
 
   const sortedRecords = useMemo(() => {
     return [...state.auditRecords].sort((a, b) => 
@@ -310,6 +328,136 @@ const ArchiveExport: React.FC = () => {
     message.success('证照包目录已导出');
   };
 
+  const handleBaselineChange = (recordId: string | undefined) => {
+    setSelectedBaselineId(recordId);
+    if (recordId) {
+      setBaselineRecord(recordId);
+    }
+  };
+
+  const handleCompare = () => {
+    if (!selectedBaselineId) {
+      message.warning('请先选择对比基准');
+      return;
+    }
+    const result = compareWithBaseline(selectedBaselineId);
+    setCompareResult(result);
+    message.success('对比完成');
+  };
+
+  const handleExportIncrementalReport = () => {
+    if (!compareResult) {
+      message.warning('请先执行对比');
+      return;
+    }
+
+    const baselineRecord = getAuditRecordById(selectedBaselineId!);
+    if (!baselineRecord) {
+      message.error('找不到对比基准记录');
+      return;
+    }
+
+    if (exportFormat === 'txt') {
+      const content = getIncrementalReportContent(compareResult, baselineRecord);
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `增量复核报告_${state.currentAuditDate}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success('增量复核报告已导出');
+    } else {
+      const wb = XLSX.utils.book_new();
+
+      const summaryData: any[][] = [
+        ['增量复核报告'],
+        [`对比基准：${baselineRecord.date}（${baselineRecord.reviewer}）`],
+        [`当前审查：${state.currentAuditDate}`],
+        [],
+        ['项目', '新增', '删除', '修改', '总计变化'],
+        ['证照文件', compareResult.summary.files.added, compareResult.summary.files.deleted, compareResult.summary.files.modified, compareResult.summary.files.total],
+        ['材料', compareResult.summary.materials.added, compareResult.summary.materials.deleted, compareResult.summary.materials.modified, compareResult.summary.materials.total],
+        ['问题风险', compareResult.summary.problems.added, compareResult.summary.problems.deleted, compareResult.summary.problems.modified, compareResult.summary.problems.total],
+      ];
+      const ws1 = XLSX.utils.aoa_to_sheet(summaryData);
+      XLSX.utils.book_append_sheet(wb, ws1, '复核摘要');
+
+      if (compareResult.files.length > 0) {
+        const fileData: any[][] = [
+          ['变化类型', '证照名称', '变化字段', '原值', '新值'],
+          ...compareResult.files.map(d => [
+            DiffTypeLabels[d.diffType],
+            d.fileName,
+            d.changedField ? FileFieldLabels[d.changedField] || d.changedField : '-',
+            d.oldValue || '-',
+            d.newValue || '-',
+          ]),
+        ];
+        const ws2 = XLSX.utils.aoa_to_sheet(fileData);
+        XLSX.utils.book_append_sheet(wb, ws2, '证照变化');
+      }
+
+      if (compareResult.materials.length > 0) {
+        const materialData: any[][] = [
+          ['变化类型', '材料名称', '变化字段', '原值', '新值'],
+          ...compareResult.materials.map(d => [
+            DiffTypeLabels[d.diffType],
+            d.materialName,
+            d.changedField ? MaterialFieldLabels[d.changedField] || d.changedField : '-',
+            d.oldValue || '-',
+            d.newValue || '-',
+          ]),
+        ];
+        const ws3 = XLSX.utils.aoa_to_sheet(materialData);
+        XLSX.utils.book_append_sheet(wb, ws3, '材料变化');
+      }
+
+      if (compareResult.problems.length > 0) {
+        const problemData: any[][] = [
+          ['变化类型', '问题类型', '风险等级', '描述'],
+          ...compareResult.problems.map(d => [
+            DiffTypeLabels[d.diffType],
+            ProblemTypeLabels[d.problemType],
+            d.severity === 'high' ? '高风险' : d.severity === 'medium' ? '中风险' : '低风险',
+            d.description,
+          ]),
+        ];
+        const ws4 = XLSX.utils.aoa_to_sheet(problemData);
+        XLSX.utils.book_append_sheet(wb, ws4, '风险变化');
+      }
+
+      XLSX.writeFile(wb, `增量复核报告_${state.currentAuditDate}.xlsx`);
+      message.success('增量复核报告已导出');
+    }
+  };
+
+  const getDiffIcon = (diffType: DiffType) => {
+    switch (diffType) {
+      case 'added':
+        return <PlusOutlined style={{ color: '#52c41a' }} />;
+      case 'deleted':
+        return <MinusOutlined style={{ color: '#ff4d4f' }} />;
+      case 'modified':
+        return <EditOutlined style={{ color: '#faad14' }} />;
+      default:
+        return null;
+    }
+  };
+
+  const getDiffColor = (diffType: DiffType) => {
+    switch (diffType) {
+      case 'added':
+        return 'green';
+      case 'deleted':
+        return 'red';
+      case 'modified':
+        return 'orange';
+      default:
+        return 'default';
+    }
+  };
+
   const recordColumns = [
     {
       title: '审查日期',
@@ -361,11 +509,26 @@ const ArchiveExport: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 100,
+      width: 150,
       render: (_: any, record: AuditRecord) => (
-        <Button type="link" size="small" onClick={() => handleViewRecord(record)}>
-          查看详情
-        </Button>
+        <Space size={4}>
+          <Button type="link" size="small" onClick={() => handleViewRecord(record)}>
+            查看
+          </Button>
+          <Button
+            size="small"
+            onClick={() => {
+              handleBaselineChange(record.id);
+              message.success('已设为对比基准');
+            }}
+            style={{ 
+              color: selectedBaselineId === record.id ? '#1890ff' : undefined,
+              fontWeight: selectedBaselineId === record.id ? 600 : undefined
+            }}
+          >
+            {selectedBaselineId === record.id ? '✓ 基准' : '设为基准'}
+          </Button>
+        </Space>
       ),
     },
   ];
@@ -528,6 +691,345 @@ const ArchiveExport: React.FC = () => {
         </Col>
 
         <Col span={8}>
+          <Card
+            style={{ background: '#1e293b', border: '1px solid #334155', marginBottom: 16 }}
+            title={
+              <Space>
+                <DiffOutlined style={{ color: '#f97316' }} />
+                <span>增量复核</span>
+              </Space>
+            }
+            extra={
+              <Space>
+                <Radio.Group
+                  size="small"
+                  value={exportFormat}
+                  onChange={e => setExportFormat(e.target.value)}
+                  optionType="button"
+                  buttonStyle="solid"
+                >
+                  <Radio.Button value="excel">Excel</Radio.Button>
+                  <Radio.Button value="txt">TXT</Radio.Button>
+                </Radio.Group>
+              </Space>
+            }
+          >
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
+              选择历史审查记录作为对比基准，自动识别新增、删除和变化的内容
+            </div>
+
+            <Space style={{ width: '100%', marginBottom: 12 }} direction="vertical">
+              <Select
+                placeholder="选择对比基准（历史审查记录）"
+                style={{ width: '100%' }}
+                value={selectedBaselineId}
+                onChange={handleBaselineChange}
+                allowClear
+                size="small"
+              >
+                {sortedRecords.map(record => (
+                  <Option key={record.id} value={record.id}>
+                    {record.date} - {record.reviewer}
+                    {record.id === state.baselineRecordId && ' (当前基准)'}
+                  </Option>
+                ))}
+              </Select>
+
+              <Space>
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<DiffOutlined />}
+                  onClick={handleCompare}
+                  disabled={!selectedBaselineId}
+                >
+                  执行对比
+                </Button>
+                <Button
+                  size="small"
+                  icon={<ExportOutlined />}
+                  onClick={handleExportIncrementalReport}
+                  disabled={!compareResult}
+                >
+                  导出增量报告
+                </Button>
+              </Space>
+            </Space>
+
+            {compareResult && (
+              <>
+                <Divider style={{ borderColor: '#334155', margin: '12px 0' }} />
+
+                <Alert
+                  message={
+                    <Space>
+                      <BulbOutlined />
+                      <span>
+                        对比完成！共发现 {compareResult.summary.files.total + compareResult.summary.materials.total + compareResult.summary.problems.total} 处变化
+                      </span>
+                    </Space>
+                  }
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 12, background: '#0c4a6e30', border: '1px solid #0369a150' }}
+                />
+
+                <Row gutter={8} style={{ marginBottom: 12 }}>
+                  <Col span={8}>
+                    <Card size="small" style={{ background: '#0f172a', textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 600, color: '#60a5fa' }}>
+                        {compareResult.summary.files.total}
+                      </div>
+                      <div style={{ color: '#64748b', fontSize: 11 }}>证照变化</div>
+                      <div style={{ fontSize: 10, marginTop: 2 }}>
+                        <span style={{ color: '#52c41a' }}>+{compareResult.summary.files.added}</span>
+                        {' / '}
+                        <span style={{ color: '#ff4d4f' }}>-{compareResult.summary.files.deleted}</span>
+                        {' / '}
+                        <span style={{ color: '#faad14' }}>~{compareResult.summary.files.modified}</span>
+                      </div>
+                    </Card>
+                  </Col>
+                  <Col span={8}>
+                    <Card size="small" style={{ background: '#0f172a', textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 600, color: '#a855f7' }}>
+                        {compareResult.summary.materials.total}
+                      </div>
+                      <div style={{ color: '#64748b', fontSize: 11 }}>材料变化</div>
+                      <div style={{ fontSize: 10, marginTop: 2 }}>
+                        <span style={{ color: '#52c41a' }}>+{compareResult.summary.materials.added}</span>
+                        {' / '}
+                        <span style={{ color: '#ff4d4f' }}>-{compareResult.summary.materials.deleted}</span>
+                        {' / '}
+                        <span style={{ color: '#faad14' }}>~{compareResult.summary.materials.modified}</span>
+                      </div>
+                    </Card>
+                  </Col>
+                  <Col span={8}>
+                    <Card size="small" style={{ background: '#0f172a', textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 600, color: '#f97316' }}>
+                        {compareResult.summary.problems.total}
+                      </div>
+                      <div style={{ color: '#64748b', fontSize: 11 }}>风险变化</div>
+                      <div style={{ fontSize: 10, marginTop: 2 }}>
+                        <span style={{ color: '#52c41a' }}>+{compareResult.summary.problems.added}</span>
+                        {' / '}
+                        <span style={{ color: '#ff4d4f' }}>-{compareResult.summary.problems.deleted}</span>
+                        {' / '}
+                        <span style={{ color: '#faad14' }}>~{compareResult.summary.problems.modified}</span>
+                      </div>
+                    </Card>
+                  </Col>
+                </Row>
+
+                <Tabs
+                  activeKey={compareTab}
+                  onChange={(key) => setCompareTab(key as any)}
+                  size="small"
+                  style={{ marginTop: 8 }}
+                >
+                  <TabPane
+                    tab={
+                      <Space size={4}>
+                        <span>证照变化</span>
+                        <Tag color="blue" style={{ fontSize: 10, padding: '0 4px' }}>
+                          {compareResult.files.length}
+                        </Tag>
+                      </Space>
+                    }
+                    key="files"
+                  >
+                    {compareResult.files.length > 0 ? (
+                      <List
+                        size="small"
+                        dataSource={compareResult.files}
+                        renderItem={(item) => (
+                          <List.Item
+                            style={{
+                              padding: '8px 12px',
+                              marginBottom: 4,
+                              background: item.diffType === 'added' ? '#064e3b30' : item.diffType === 'deleted' ? '#450a0a30' : '#78350f30',
+                              borderRadius: 4,
+                              border: `1px solid ${item.diffType === 'added' ? '#065f4650' : item.diffType === 'deleted' ? '#7f1d1d50' : '#92400e50'}`,
+                            }}
+                          >
+                            <div style={{ width: '100%' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                <Space>
+                                  {getDiffIcon(item.diffType)}
+                                  <Tag color={getDiffColor(item.diffType)} style={{ fontSize: 10 }}>
+                                    {DiffTypeLabels[item.diffType]}
+                                  </Tag>
+                                  <span style={{ fontWeight: 500, fontSize: 12 }}>{item.fileName}</span>
+                                </Space>
+                              </div>
+                              {item.changedField && (
+                                <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                  <span style={{ color: '#64748b' }}>
+                                    {FileFieldLabels[item.changedField] || item.changedField}：
+                                  </span>
+                                  {item.oldValue && (
+                                    <span style={{ textDecoration: 'line-through', color: '#f87171', marginRight: 8 }}>
+                                      {item.oldValue}
+                                    </span>
+                                  )}
+                                  {item.newValue && (
+                                    <span style={{ color: '#4ade80' }}>
+                                      → {item.newValue}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </List.Item>
+                        )}
+                      />
+                    ) : (
+                      <div style={{ textAlign: 'center', color: '#64748b', padding: '20px 0', fontSize: 12 }}>
+                        证照文件无变化
+                      </div>
+                    )}
+                  </TabPane>
+
+                  <TabPane
+                    tab={
+                      <Space size={4}>
+                        <span>材料变化</span>
+                        <Tag color="purple" style={{ fontSize: 10, padding: '0 4px' }}>
+                          {compareResult.materials.length}
+                        </Tag>
+                      </Space>
+                    }
+                    key="materials"
+                  >
+                    {compareResult.materials.length > 0 ? (
+                      <List
+                        size="small"
+                        dataSource={compareResult.materials}
+                        renderItem={(item) => (
+                          <List.Item
+                            style={{
+                              padding: '8px 12px',
+                              marginBottom: 4,
+                              background: item.diffType === 'added' ? '#064e3b30' : item.diffType === 'deleted' ? '#450a0a30' : '#78350f30',
+                              borderRadius: 4,
+                              border: `1px solid ${item.diffType === 'added' ? '#065f4650' : item.diffType === 'deleted' ? '#7f1d1d50' : '#92400e50'}`,
+                            }}
+                          >
+                            <div style={{ width: '100%' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                <Space>
+                                  {getDiffIcon(item.diffType)}
+                                  <Tag color={getDiffColor(item.diffType)} style={{ fontSize: 10 }}>
+                                    {DiffTypeLabels[item.diffType]}
+                                  </Tag>
+                                  <span style={{ fontWeight: 500, fontSize: 12 }}>{item.materialName}</span>
+                                </Space>
+                              </div>
+                              {item.changedField && (
+                                <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                  <span style={{ color: '#64748b' }}>
+                                    {MaterialFieldLabels[item.changedField] || item.changedField}：
+                                  </span>
+                                  {item.oldValue && (
+                                    <span style={{ textDecoration: 'line-through', color: '#f87171', marginRight: 8 }}>
+                                      {item.oldValue}
+                                    </span>
+                                  )}
+                                  {item.newValue && (
+                                    <span style={{ color: '#4ade80' }}>
+                                      → {item.newValue}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </List.Item>
+                        )}
+                      />
+                    ) : (
+                      <div style={{ textAlign: 'center', color: '#64748b', padding: '20px 0', fontSize: 12 }}>
+                        材料无变化
+                      </div>
+                    )}
+                  </TabPane>
+
+                  <TabPane
+                    tab={
+                      <Space size={4}>
+                        <span>风险变化</span>
+                        <Tag color="orange" style={{ fontSize: 10, padding: '0 4px' }}>
+                          {compareResult.problems.length}
+                        </Tag>
+                      </Space>
+                    }
+                    key="problems"
+                  >
+                    {compareResult.problems.length > 0 ? (
+                      <List
+                        size="small"
+                        dataSource={compareResult.problems}
+                        renderItem={(item) => (
+                          <List.Item
+                            style={{
+                              padding: '8px 12px',
+                              marginBottom: 4,
+                              background: item.diffType === 'added' ? '#064e3b30' : item.diffType === 'deleted' ? '#450a0a30' : '#78350f30',
+                              borderRadius: 4,
+                              border: `1px solid ${item.diffType === 'added' ? '#065f4650' : item.diffType === 'deleted' ? '#7f1d1d50' : '#92400e50'}`,
+                            }}
+                          >
+                            <div style={{ width: '100%' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                <Space>
+                                  {getDiffIcon(item.diffType)}
+                                  <Tag color={getDiffColor(item.diffType)} style={{ fontSize: 10 }}>
+                                    {DiffTypeLabels[item.diffType]}
+                                  </Tag>
+                                  <Tag
+                                    color={item.severity === 'high' ? 'red' : item.severity === 'medium' ? 'orange' : 'blue'}
+                                    style={{ fontSize: 10 }}
+                                  >
+                                    {item.severity === 'high' ? '高风险' : item.severity === 'medium' ? '中风险' : '低风险'}
+                                  </Tag>
+                                  <span style={{ fontWeight: 500, fontSize: 12 }}>
+                                    {ProblemTypeLabels[item.problemType]}
+                                  </span>
+                                </Space>
+                              </div>
+                              <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                {item.description}
+                              </div>
+                            </div>
+                          </List.Item>
+                        )}
+                      />
+                    ) : (
+                      <div style={{ textAlign: 'center', color: '#64748b', padding: '20px 0', fontSize: 12 }}>
+                        问题风险无变化
+                      </div>
+                    )}
+                  </TabPane>
+                </Tabs>
+              </>
+            )}
+
+            {!compareResult && sortedRecords.length === 0 && (
+              <div style={{ textAlign: 'center', color: '#64748b', padding: '20px 0', fontSize: 12 }}>
+                <HistoryOutlined style={{ fontSize: 24, marginBottom: 8 }} />
+                <div>暂无历史记录可对比</div>
+                <div style={{ marginTop: 4 }}>请先保存一条审查记录</div>
+              </div>
+            )}
+
+            {!compareResult && sortedRecords.length > 0 && (
+              <div style={{ textAlign: 'center', color: '#64748b', padding: '20px 0', fontSize: 12 }}>
+                <DiffOutlined style={{ fontSize: 24, marginBottom: 8 }} />
+                <div>选择基准并点击"执行对比"查看差异</div>
+              </div>
+            )}
+          </Card>
+
           <Card
             style={{ background: '#1e293b', border: '1px solid #334155', marginBottom: 16 }}
             title={

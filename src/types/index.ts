@@ -22,6 +22,8 @@ export type ProblemStatus =
   | 'processing'  // 处理中
   | 'resolved';   // 已解决
 
+export type ProblemSeverity = 'high' | 'medium' | 'low';
+
 export type FileStatus = 'pending' | 'matched' | 'reviewed';
 
 export interface LicenseFile {
@@ -53,7 +55,7 @@ export interface Material {
 export interface AuditProblem {
   id: string;
   type: ProblemType;
-  severity: 'high' | 'medium' | 'low';
+  severity: ProblemSeverity;
   fileId: string;
   materialId?: string;
   description: string;
@@ -73,6 +75,76 @@ export interface AuditRecord {
   problemsCount: number;
   resolvedCount: number;
   remark?: string;
+  snapshot: AuditSnapshot;
+}
+
+export interface AuditSnapshot {
+  files: LicenseFile[];
+  materials: Material[];
+  problems: AuditProblem[];
+  auditDate: string;
+  institutionName: string;
+  warningDays: number;
+}
+
+export type DiffType = 'added' | 'deleted' | 'modified' | 'unchanged';
+
+export interface FileDiff {
+  id: string;
+  diffType: DiffType;
+  fileName: string;
+  changedField?: keyof LicenseFile;
+  oldValue?: string;
+  newValue?: string;
+}
+
+export interface MaterialDiff {
+  id: string;
+  diffType: DiffType;
+  materialName: string;
+  changedField?: keyof Material;
+  oldValue?: string;
+  newValue?: string;
+}
+
+export interface ProblemDiff {
+  id: string;
+  diffType: DiffType;
+  problemType: ProblemType;
+  severity: ProblemSeverity;
+  description: string;
+}
+
+export interface CompareResult {
+  files: FileDiff[];
+  materials: MaterialDiff[];
+  problems: ProblemDiff[];
+  summary: {
+    files: {
+      added: number;
+      deleted: number;
+      modified: number;
+      total: number;
+    };
+    materials: {
+      added: number;
+      deleted: number;
+      modified: number;
+      total: number;
+    };
+    problems: {
+      added: number;
+      deleted: number;
+      modified: number;
+      total: number;
+    };
+  };
+}
+
+export interface DuplicateFileInfo {
+  file: LicenseFile;
+  duplicateWith: string[];
+  reason: 'name' | 'licenseNumber';
 }
 
 export interface AppState {
@@ -84,6 +156,7 @@ export interface AppState {
   institutionName: string;
   warningDays: number;
   lastAuditRecordId?: string;
+  baselineRecordId?: string;
 }
 
 export const LicenseTypeLabels: Record<LicenseType, string> = {
@@ -112,4 +185,37 @@ export const ProblemStatusLabels: Record<ProblemStatus, string> = {
   pending: '待处理',
   processing: '处理中',
   resolved: '已解决',
+};
+
+export const FileFieldLabels: Record<keyof LicenseFile, string> = {
+  id: 'ID',
+  name: '证照名称',
+  type: '证照类型',
+  fileSize: '文件大小',
+  uploadTime: '上传时间',
+  status: '状态',
+  licenseNumber: '证照编号',
+  issueDate: '签发日期',
+  expiryDate: '有效期至',
+  authorizedRegion: '授权区域',
+  authorizedInstitution: '授权机构',
+  issuer: '签发机关',
+  remark: '备注',
+};
+
+export const MaterialFieldLabels: Record<keyof Material, string> = {
+  id: 'ID',
+  name: '材料名称',
+  category: '分类',
+  specification: '规格',
+  manufacturer: '生产厂家',
+  supplier: '供应商',
+  licenseFiles: '关联证照',
+};
+
+export const DiffTypeLabels: Record<DiffType, string> = {
+  added: '新增',
+  deleted: '删除',
+  modified: '变更',
+  unchanged: '未变',
 };
