@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
+import dayjs from 'dayjs';
 import {
   AppState,
   LicenseFile,
@@ -8,6 +9,7 @@ import {
   ProblemStatus,
   CompareResult,
   DuplicateFileInfo,
+  AuditSnapshot,
 } from '../types';
 import {
   loadState,
@@ -27,12 +29,13 @@ type Action =
   | { type: 'INIT_STATE' }
   | { type: 'ADD_FILES'; files: LicenseFile[] }
   | { type: 'UPDATE_FILE'; file: LicenseFile }
+  | { type: 'UPDATE_FILE_PARTIAL'; id: string; updates: Partial<LicenseFile> }
   | { type: 'DELETE_FILE'; fileId: string }
   | { type: 'ADD_MATERIAL'; material: Material }
   | { type: 'UPDATE_MATERIAL'; material: Material }
   | { type: 'DELETE_MATERIAL'; materialId: string }
   | { type: 'UPDATE_PROBLEM'; problem: AuditProblem }
-  | { type: 'UPDATE_PROBLEM_STATUS'; problemId: string; status: ProblemStatus; opinion?: string }
+  | { type: 'UPDATE_PROBLEM_STATUS'; problemId: string; status: ProblemStatus; opinion?: string; handler?: string }
   | { type: 'RUN_AUDIT' }
   | { type: 'SET_AUDIT_DATE'; date: string }
   | { type: 'SET_INSTITUTION_NAME'; name: string }
@@ -40,6 +43,9 @@ type Action =
   | { type: 'ADD_AUDIT_RECORD'; record: AuditRecord; reviewer: string; remark?: string }
   | { type: 'SET_BASELINE_RECORD'; recordId: string | undefined }
   | { type: 'LOAD_LAST_AUDIT'; recordId: string }
+  | { type: 'GENERATE_BATCH_ID' }
+  | { type: 'SET_CURRENT_BATCH_ID'; batchId: string | undefined }
+  | { type: 'RESTORE_FROM_SNAPSHOT'; snapshot: AuditSnapshot }
   | { type: 'RESET_STATE' };
 
 function initState(): AppState {
@@ -83,6 +89,13 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, files };
     }
 
+    case 'UPDATE_FILE_PARTIAL': {
+      const files = state.files.map(f =>
+        f.id === action.id ? { ...f, ...action.updates } : f
+      );
+      return { ...state, files };
+    }
+
     case 'DELETE_FILE': {
       const files = state.files.filter(f => f.id !== action.fileId);
       const materials = state.materials.map(m => ({
@@ -116,11 +129,32 @@ function reducer(state: AppState, action: Action): AppState {
     }
 
     case 'UPDATE_PROBLEM_STATUS': {
-      const problems = state.problems.map(p =>
-        p.id === action.problemId
-          ? { ...p, status: action.status, handlerOpinion: action.opinion, updatedAt: new Date().toISOString().split('T')[0], lastHandledAt: new Date().toISOString().split('T')[0], isNewProblem: false }
-          : p
-      );
+      const now = new Date().toISOString().split('T')[0];
+      const problems = state.problems.map(p => {
+        if (p.id !== action.problemId) return p;
+        const historyItem = {
+          id: `hist-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          status: p.status,
+          opinion: p.handlerOpinion,
+          handledBy: p.handledBy || p.lastHandledBy,
+          handledAt: p.lastHandledAt || p.updatedAt,
+        };
+        const prevHistory = p.opinionHistory || [];
+        const newHistory = prevHistory.length === 0 && !historyItem.handledAt
+          ? []
+          : [...prevHistory, historyItem];
+        return {
+          ...p,
+          status: action.status,
+          handlerOpinion: action.opinion,
+          handledBy: action.handler,
+          lastHandledAt: now,
+          lastHandledBy: action.handler,
+          updatedAt: now,
+          isNewProblem: false,
+          opinionHistory: newHistory,
+        };
+      });
       return { ...state, problems };
     }
 
@@ -167,6 +201,25 @@ function reducer(state: AppState, action: Action): AppState {
       return state;
     }
 
+    case 'GENERATE_BATCH_ID': {
+      const now = dayjs();
+      const newBatchId = `BATCH-${now.format('YYYYMMDD')}-${now.format('HHmmss')}`;
+      return { ...state, currentBatchId: newBatchId };
+    }
+
+    case 'SET_CURRENT_BATCH_ID': {
+      return { ...state, currentBatchId: action.batchId };
+    }
+
+    case 'RESTORE_FROM_SNAPSHOT': {
+      return {
+        ...state,
+        files: JSON.parse(JSON.stringify(action.snapshot.files)),
+        materials: JSON.parse(JSON.stringify(action.snapshot.materials)),
+        problems: JSON.parse(JSON.stringify(action.snapshot.problems)),
+      };
+    }
+
     case 'RESET_STATE': {
       return { ...defaultState, problems: [] };
     }
@@ -180,12 +233,12 @@ interface AppContextType {
   state: AppState;
   dispatch: React.Dispatch<Action>;
   addFiles: (files: File[]) => { duplicates: DuplicateFileInfo[]; addedCount: number };
-  updateFile: (file: LicenseFile) => void;
+  updateFile: (fileOrId: LicenseFile | string, updates?: Partial<LicenseFile>) => void;
   deleteFile: (fileId: string) => void;
   addMaterial: (material: Omit<Material, 'id' | 'licenseFiles'>) => void;
   updateMaterial: (material: Material) => void;
   deleteMaterial: (materialId: string) => void;
-  updateProblemStatus: (problemId: string, status: ProblemStatus, opinion?: string) => void;
+  updateProblemStatus: (problemId: string, status: ProblemStatus, opinion?: string, handler?: string) => void;
   runAudit: () => void;
   setAuditDate: (date: string) => void;
   setInstitutionName: (name: string) => void;
@@ -197,7 +250,10 @@ interface AppContextType {
   getFileById: (id: string) => LicenseFile | undefined;
   getMaterialById: (id: string) => Material | undefined;
   getAuditRecordById: (id: string) => AuditRecord | undefined;
-  getIncrementalReportContent: (compareResult: CompareResult, baselineRecord: AuditRecord) => string;
+  getIncrementalReportContent: (compareResult: CompareResult, baselineRecord: AuditRecord, currentAuditDate?: string) => string;
+  generateBatchId: () => void;
+  setCurrentBatchId: (id: string | undefined) => void;
+  restoreFromSnapshot: (snapshot: AuditSnapshot) => void;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -216,6 +272,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state]);
 
   const addFiles = (fileList: File[]): { duplicates: DuplicateFileInfo[]; addedCount: number } => {
+    let batchId = state.currentBatchId;
+    const now = new Date();
+    
+    if (!batchId) {
+      const nowStr = dayjs(now);
+      batchId = `BATCH-${nowStr.format('YYYYMMDD')}-${nowStr.format('HHmmss')}`;
+      dispatch({ type: 'SET_CURRENT_BATCH_ID', batchId });
+    } else {
+      const lastBatchFile = state.files.filter(f => f.batchId === batchId).sort((a, b) => 
+        new Date(a.uploadTime).getTime() - new Date(b.uploadTime).getTime()
+      ).pop();
+      
+      let needNewBatch = true;
+      if (lastBatchFile) {
+        const diffMs = now.getTime() - new Date(lastBatchFile.uploadTime).getTime();
+        needNewBatch = diffMs > 30 * 60 * 1000;
+      }
+      
+      if (needNewBatch) {
+        const nowStr = dayjs(now);
+        batchId = `BATCH-${nowStr.format('YYYYMMDD')}-${nowStr.format('HHmmss')}`;
+        dispatch({ type: 'SET_CURRENT_BATCH_ID', batchId });
+      }
+    }
+    
     const newFiles: LicenseFile[] = fileList.map(file => ({
       id: generateId(),
       name: file.name,
@@ -223,6 +304,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       fileSize: file.size,
       uploadTime: new Date().toISOString().split('T')[0],
       status: 'pending',
+      batchId: batchId,
+      duplicateConfirmed: false,
     }));
     
     const allFiles = [...state.files, ...newFiles];
@@ -240,8 +323,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   };
 
-  const updateFile = (file: LicenseFile) => {
-    dispatch({ type: 'UPDATE_FILE', file });
+  const updateFile = (fileOrId: LicenseFile | string, updates?: Partial<LicenseFile>) => {
+    if (typeof fileOrId === 'string') {
+      dispatch({ type: 'UPDATE_FILE_PARTIAL', id: fileOrId, updates: updates || {} });
+    } else {
+      dispatch({ type: 'UPDATE_FILE', file: fileOrId });
+    }
     setTimeout(() => dispatch({ type: 'RUN_AUDIT' }), 100);
   };
 
@@ -268,8 +355,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'DELETE_MATERIAL', materialId });
   };
 
-  const updateProblemStatus = (problemId: string, status: ProblemStatus, opinion?: string) => {
-    dispatch({ type: 'UPDATE_PROBLEM_STATUS', problemId, status, opinion });
+  const updateProblemStatus = (problemId: string, status: ProblemStatus, opinion?: string, handler?: string) => {
+    dispatch({ type: 'UPDATE_PROBLEM_STATUS', problemId, status, opinion, handler });
   };
 
   const runAudit = () => {
@@ -324,6 +411,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const getAuditRecordById = (id: string) => state.auditRecords.find(r => r.id === id);
 
+  const generateBatchId = () => {
+    dispatch({ type: 'GENERATE_BATCH_ID' });
+  };
+
+  const setCurrentBatchId = (id: string | undefined) => {
+    dispatch({ type: 'SET_CURRENT_BATCH_ID', batchId: id });
+  };
+
+  const restoreFromSnapshot = (snapshot: AuditSnapshot) => {
+    dispatch({ type: 'RESTORE_FROM_SNAPSHOT', snapshot });
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -348,6 +447,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         getMaterialById,
         getAuditRecordById,
         getIncrementalReportContent,
+        generateBatchId,
+        setCurrentBatchId,
+        restoreFromSnapshot,
       }}
     >
       {children}

@@ -26,6 +26,23 @@ export type ProblemSeverity = 'high' | 'medium' | 'low';
 
 export type FileStatus = 'pending' | 'matched' | 'reviewed';
 
+export type ProblemGroupType = 'new' | 'still_exists' | 'resolved' | 'still_abnormal_after_handle';
+
+export const ProblemGroupTypeLabels: Record<ProblemGroupType, string> = {
+  new: '新增问题',
+  still_exists: '仍存在问题',
+  resolved: '已消除问题',
+  still_abnormal_after_handle: '已处理后仍异常',
+};
+
+export interface OpinionHistoryItem {
+  id: string;
+  status: ProblemStatus;
+  opinion?: string;
+  handledBy?: string;
+  handledAt: string;
+}
+
 export interface LicenseFile {
   id: string;
   name: string;
@@ -40,6 +57,8 @@ export interface LicenseFile {
   authorizedInstitution?: string;
   issuer?: string;
   remark?: string;
+  batchId?: string;
+  duplicateConfirmed?: boolean;
 }
 
 export interface Material {
@@ -69,6 +88,8 @@ export interface AuditProblem {
   lastHandledAt?: string;
   lastHandledBy?: string;
   isNewProblem?: boolean;
+  handledBy?: string;
+  opinionHistory?: OpinionHistoryItem[];
 }
 
 export interface AuditRecord {
@@ -162,6 +183,8 @@ export interface AppState {
   warningDays: number;
   lastAuditRecordId?: string;
   baselineRecordId?: string;
+  currentBatchId?: string;
+  handlerName?: string;
 }
 
 export const LicenseTypeLabels: Record<LicenseType, string> = {
@@ -206,6 +229,8 @@ export const FileFieldLabels: Record<keyof LicenseFile, string> = {
   authorizedInstitution: '授权机构',
   issuer: '签发机关',
   remark: '备注',
+  batchId: '导入批次',
+  duplicateConfirmed: '重复确认',
 };
 
 export const MaterialFieldLabels: Record<keyof Material, string> = {

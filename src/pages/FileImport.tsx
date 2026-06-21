@@ -58,7 +58,7 @@ const { Option } = Select;
 const { TextArea } = Input;
 
 const FileImport: React.FC = () => {
-  const { state, addFiles, updateFile, deleteFile, getDuplicates, getFileById } = useApp();
+  const { state, addFiles, updateFile, deleteFile, getDuplicates, getFileById, setCurrentBatchId } = useApp();
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingFile, setEditingFile] = useState<LicenseFile | null>(null);
   const [form] = Form.useForm();
@@ -66,6 +66,7 @@ const FileImport: React.FC = () => {
   const [duplicateModalVisible, setDuplicateModalVisible] = useState(false);
   const [newDuplicates, setNewDuplicates] = useState<DuplicateFileInfo[]>([]);
   const [lastImportResult, setLastImportResult] = useState<{ count: number; autoDetected: number } | null>(null);
+  const [selectedBatchId, setSelectedBatchIdState] = useState<string | 'all'>('all');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpload: UploadProps['customRequest'] = (options: any) => {
@@ -156,8 +157,42 @@ const FileImport: React.FC = () => {
     file.licenseNumber?.includes(searchText)
   );
 
+  const allBatchIds = useMemo(() => {
+    const ids = Array.from(new Set(state.files.map(f => f.batchId).filter(Boolean))) as string[];
+    return ids.sort();
+  }, [state.files]);
+
+  const batchFileCountMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    state.files.forEach(f => {
+      if (f.batchId) {
+        map[f.batchId] = (map[f.batchId] || 0) + 1;
+      }
+    });
+    return map;
+  }, [state.files]);
+
+  const batchFilteredFiles = useMemo(() => {
+    if (selectedBatchId === 'all') return state.files;
+    return state.files.filter(f => f.batchId === selectedBatchId);
+  }, [selectedBatchId, state.files]);
+
   const duplicates = useMemo(() => getDuplicates(), [state.files]);
+  const batchFilteredDuplicates = useMemo(() => 
+    duplicates.filter(d => 
+      selectedBatchId === 'all' ? true : d.file.batchId === selectedBatchId
+    ), 
+    [duplicates, selectedBatchId]
+  );
   const duplicateFileIds = useMemo(() => new Set(duplicates.map(d => d.file.id)), [duplicates]);
+
+  const batchStats = useMemo(() => {
+    const total = batchFilteredFiles.length;
+    const confirmed = batchFilteredFiles.filter(f => f.duplicateConfirmed === true).length;
+    const pendingDupFileIds = new Set(batchFilteredDuplicates.map(d => d.file.id));
+    const pendingDup = pendingDupFileIds.size;
+    return { total, confirmed, pendingDup };
+  }, [batchFilteredFiles, batchFilteredDuplicates]);
 
   const typeOrder: LicenseType[] = ['registration_certificate', 'business_license', 'medical_device_license', 'authorization_chain'];
   const typeIcons: Record<LicenseType, React.ReactNode> = {
@@ -180,7 +215,7 @@ const FileImport: React.FC = () => {
       medical_device_license: [],
       authorization_chain: [],
     };
-    state.files.forEach(f => {
+    batchFilteredFiles.forEach(f => {
       groups[f.type].push(f);
     });
     typeOrder.forEach(type => {
@@ -190,7 +225,7 @@ const FileImport: React.FC = () => {
       });
     });
     return groups;
-  }, [state.files]);
+  }, [batchFilteredFiles]);
 
   const batchColumns = [
     {
@@ -274,12 +309,15 @@ const FileImport: React.FC = () => {
       width: 160,
       render: (_: any, record: DuplicateFileInfo) => (
         <Space size="small">
-          <Button type="link" size="small" icon={<CheckCircleOutlined />} onClick={() => handleDelete(record.file.id)}>
+          <Button type="link" size="small" icon={<CheckCircleOutlined />} onClick={() => {
+            updateFile(record.file.id, { duplicateConfirmed: true });
+            message.success('已确认保留');
+          }}>
             确认保留
           </Button>
-          <Popconfirm title="确认删除该重复项？" onConfirm={() => handleDelete(record.file.id)} okText="确认" cancelText="取消">
+          <Popconfirm title="确认删除此文件？" onConfirm={() => handleDelete(record.file.id)} okText="确认" cancelText="取消">
             <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-              删除
+              删除此文件
             </Button>
           </Popconfirm>
         </Space>
@@ -288,13 +326,37 @@ const FileImport: React.FC = () => {
   ];
 
   const handleRetainAll = () => {
-    message.success('已保留全部重复项');
+    const uniqueIds = [...new Set(batchFilteredDuplicates.map(d => d.file.id))];
+    uniqueIds.forEach(id => updateFile(id, { duplicateConfirmed: true }));
+    message.success(`已确认保留 ${uniqueIds.length} 个重复项`);
   };
 
   const handleDeleteAllDuplicates = () => {
-    const uniqueIds = [...new Set(duplicates.map(d => d.file.id))];
+    const groupsMap = new Map<string, LicenseFile[]>();
+    batchFilteredDuplicates.forEach(d => {
+      const key = `${d.reason}_${d.file.name}_${d.file.licenseNumber || ''}_${d.file.authorizedInstitution || ''}`;
+      if (!groupsMap.has(key)) {
+        groupsMap.set(key, []);
+      }
+      const arr = groupsMap.get(key)!;
+      if (!arr.some(f => f.id === d.file.id)) {
+        arr.push(d.file);
+      }
+    });
+    
+    const idsToDelete: string[] = [];
+    groupsMap.forEach(files => {
+      if (files.length > 1) {
+        const sorted = [...files].sort((a, b) => 
+          new Date(a.uploadTime).getTime() - new Date(b.uploadTime).getTime()
+        );
+        sorted.slice(1).forEach(f => idsToDelete.push(f.id));
+      }
+    });
+    
+    const uniqueIds = [...new Set(idsToDelete)];
     uniqueIds.forEach(id => deleteFile(id));
-    message.success(`已删除 ${uniqueIds.length} 个重复项`);
+    message.success(`已删除 ${uniqueIds.length} 个重复项（保留每组中上传时间最早的文件）`);
   };
 
   const statusColors: Record<FileStatus, string> = {
@@ -579,13 +641,108 @@ const FileImport: React.FC = () => {
         />
       </Card>
 
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col span={14}>
+          <Card style={{ background: '#0f172a', border: '1px solid #334155', height: '100%' }} bodyStyle={{ padding: 12 }}>
+            <Space direction="vertical" style={{ width: '100%' }} size="small">
+              <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 4 }}>
+                <span style={{ marginRight: 8 }}>📦</span>批次筛选
+              </div>
+              <Select
+                style={{ width: '100%' }}
+                size="small"
+                value={selectedBatchId}
+                onChange={val => setSelectedBatchIdState(val)}
+                dropdownStyle={{ background: '#1e293b', border: '1px solid #334155' }}
+                listHeight={256}
+              >
+                <Option value="all">
+                  <Space>
+                    <span>全部批次</span>
+                    <Tag color="blue">{state.files.length}</Tag>
+                  </Space>
+                </Option>
+                {allBatchIds.map(bid => (
+                  <Option key={bid} value={bid}>
+                    <Space>
+                      <span>{bid}</span>
+                      <Tag color="cyan">{batchFileCountMap[bid] || 0}</Tag>
+                      {bid === state.currentBatchId && <Tag color="green">当前</Tag>}
+                    </Space>
+                  </Option>
+                ))}
+              </Select>
+              {state.currentBatchId && selectedBatchId !== state.currentBatchId && (
+                <Button 
+                  type="link" 
+                  size="small" 
+                  style={{ padding: 0, height: 'auto' }} 
+                  onClick={() => {
+                    setSelectedBatchIdState(state.currentBatchId!);
+                    setCurrentBatchId(state.currentBatchId);
+                  }}
+                >
+                  切换到当前批次 {state.currentBatchId}
+                </Button>
+              )}
+            </Space>
+          </Card>
+        </Col>
+        <Col span={10}>
+          <Card style={{ background: '#0f172a', border: '1px solid #334155', height: '100%' }} bodyStyle={{ padding: 12 }}>
+            <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
+              <span style={{ marginRight: 8 }}>📊</span>批次进度统计
+            </div>
+            <Row gutter={8}>
+              <Col span={8}>
+                <div style={{ 
+                  background: '#1e293b', 
+                  padding: '8px 6px', 
+                  borderRadius: 4, 
+                  textAlign: 'center',
+                  border: '1px solid #334155'
+                }}>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: '#60a5fa' }}>{batchStats.total}</div>
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>文件总数</div>
+                </div>
+              </Col>
+              <Col span={8}>
+                <div style={{ 
+                  background: '#1e293b', 
+                  padding: '8px 6px', 
+                  borderRadius: 4, 
+                  textAlign: 'center',
+                  border: '1px solid #065f4630'
+                }}>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: '#52c41a' }}>{batchStats.confirmed}</div>
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>已确认重复</div>
+                </div>
+              </Col>
+              <Col span={8}>
+                <div style={{ 
+                  background: '#1e293b', 
+                  padding: '8px 6px', 
+                  borderRadius: 4, 
+                  textAlign: 'center',
+                  border: batchStats.pendingDup > 0 ? '1px solid #7f1d1d50' : '1px solid #334155'
+                }}>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: batchStats.pendingDup > 0 ? '#ff4d4f' : '#64748b' }}>{batchStats.pendingDup}</div>
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>待确认重复</div>
+                </div>
+              </Col>
+            </Row>
+          </Card>
+        </Col>
+      </Row>
+
       <Card
         style={{ background: '#1e293b', border: '1px solid #334155', marginBottom: 16 }}
         title={
           <Space>
             <FileProtectOutlined style={{ color: '#60a5fa' }} />
             <span>导入批次视图</span>
-            <Tag color="blue">{state.files.length} 个文件</Tag>
+            <Tag color="blue">{batchFilteredFiles.length} 个文件</Tag>
+            {selectedBatchId !== 'all' && <Tag color="cyan">{selectedBatchId}</Tag>}
           </Space>
         }
       >
@@ -619,14 +776,15 @@ const FileImport: React.FC = () => {
         />
       </Card>
 
-      {duplicates.length > 0 && (
+      {batchFilteredDuplicates.length > 0 && (
         <Card
           style={{ background: '#1e293b', border: '1px solid #7f1d1d', marginBottom: 16 }}
           title={
             <Space>
               <WarningOutlined style={{ color: '#ff4d4f' }} />
               <span>待确认重复项</span>
-              <Tag color="red">{duplicates.length}</Tag>
+              <Tag color="red">{batchFilteredDuplicates.length}</Tag>
+              {selectedBatchId !== 'all' && <Tag color="cyan">{selectedBatchId}</Tag>}
             </Space>
           }
           extra={
@@ -634,7 +792,7 @@ const FileImport: React.FC = () => {
               <Button size="small" icon={<CheckCircleOutlined />} onClick={handleRetainAll}>
                 全部保留
               </Button>
-              <Popconfirm title="确认删除全部重复项？" onConfirm={handleDeleteAllDuplicates} okText="确认" cancelText="取消">
+              <Popconfirm title="确认删除全部重复项？将保留每组中上传时间最早的文件" onConfirm={handleDeleteAllDuplicates} okText="确认" cancelText="取消">
                 <Button size="small" danger icon={<DeleteOutlined />}>
                   全部删除重复
                 </Button>
@@ -644,7 +802,7 @@ const FileImport: React.FC = () => {
         >
           <Table
             columns={duplicateColumns}
-            dataSource={duplicates}
+            dataSource={batchFilteredDuplicates}
             rowKey={record => record.file.id + '_' + record.reason}
             size="small"
             pagination={false}

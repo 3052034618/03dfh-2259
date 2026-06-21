@@ -20,6 +20,9 @@ import {
   Descriptions,
   Badge,
   Divider,
+  Segmented,
+  Timeline,
+  List,
 } from 'antd';
 import {
   WarningOutlined,
@@ -45,6 +48,8 @@ import {
   ProblemStatusLabels,
   LicenseFile,
   LicenseTypeLabels,
+  ProblemGroupTypeLabels,
+  OpinionHistoryItem,
 } from '../types';
 
 const { TextArea } = Input;
@@ -60,6 +65,10 @@ const ProblemList: React.FC = () => {
   const [selectedProblem, setSelectedProblem] = useState<AuditProblem | null>(null);
   const [handleModalVisible, setHandleModalVisible] = useState(false);
   const [handleForm] = Form.useForm();
+  const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list');
+  const [handlerName, setHandlerName] = useState<string>('');
+
+  const handlerOptions = ['张合规', '李质控', '王审核', '赵专员'];
 
   const filteredProblems = useMemo(() => {
     return state.problems.filter(problem => {
@@ -73,6 +82,33 @@ const ProblemList: React.FC = () => {
       return matchesSearch && matchesType && matchesStatus && matchesSeverity;
     });
   }, [state.problems, searchText, typeFilter, statusFilter, severityFilter, getFileById]);
+
+  const newProblems = useMemo(() => 
+    filteredProblems.filter(p => p.isNewProblem === true),
+    [filteredProblems]
+  );
+
+  const stillExistProblems = useMemo(() => 
+    filteredProblems.filter(p => p.isNewProblem === false && p.status === 'pending'),
+    [filteredProblems]
+  );
+
+  const resolvedProblems = useMemo(() => 
+    filteredProblems.filter(p => 
+      p.status === 'resolved' || 
+      (p.previousStatus !== undefined) || 
+      p.description.includes('已消除')
+    ),
+    [filteredProblems]
+  );
+
+  const stillAbnormalProblems = useMemo(() => 
+    filteredProblems.filter(p => 
+      p.status === 'processing' || 
+      (p.status !== 'resolved' && p.lastHandledAt && (p.status === 'pending' || p.status === 'processing'))
+    ),
+    [filteredProblems]
+  );
 
   const pendingCount = state.problems.filter(p => p.status === 'pending').length;
   const processingCount = state.problems.filter(p => p.status === 'processing').length;
@@ -110,6 +146,7 @@ const ProblemList: React.FC = () => {
     handleForm.setFieldsValue({
       status: problem.status,
       opinion: problem.handlerOpinion || '',
+      handler: problem.lastHandledBy || problem.handledBy || handlerName || '',
     });
     setHandleModalVisible(true);
   };
@@ -119,7 +156,11 @@ const ProblemList: React.FC = () => {
       const values = await handleForm.validateFields();
       if (!selectedProblem) return;
 
-      updateProblemStatus(selectedProblem.id, values.status as ProblemStatus, values.opinion);
+      if (values.handler) {
+        setHandlerName(values.handler);
+      }
+
+      updateProblemStatus(selectedProblem.id, values.status as ProblemStatus, values.opinion, values.handler);
       setHandleModalVisible(false);
       setSelectedProblem(null);
       handleForm.resetFields();
@@ -325,6 +366,190 @@ const ProblemList: React.FC = () => {
       </Row>
 
       <Card
+        style={{ background: '#1e293b', border: '1px solid #334155', marginBottom: 20 }}
+        title={
+          <Space>
+            <EyeOutlined style={{ color: '#1890ff' }} />
+            <span>复核看板</span>
+          </Space>
+        }
+        extra={
+          <Segmented
+            value={viewMode}
+            onChange={(val) => setViewMode(val as 'list' | 'kanban')}
+            options={[
+              { label: '列表视图', value: 'list' },
+              { label: '看板视图', value: 'kanban' },
+            ]}
+          />
+        }
+      >
+        {viewMode === 'kanban' ? (
+          <Row gutter={16}>
+            <Col span={6}>
+              <Card
+                size="small"
+                style={{ background: '#0f172a', border: '1px solid #34d399', height: '100%' }}
+                title={
+                  <Space>
+                    <PlusOutlined style={{ color: '#34d399' }} />
+                    <span>{ProblemGroupTypeLabels.new}</span>
+                    <Tag color="green" style={{ marginLeft: 0 }}>{newProblems.length}</Tag>
+                  </Space>
+                }
+              >
+                <List
+                  size="small"
+                  dataSource={newProblems}
+                  locale={{ emptyText: '暂无数据' }}
+                  renderItem={(item) => (
+                    <List.Item
+                      onClick={() => handleViewDetail(item)}
+                      style={{ 
+                        cursor: 'pointer', 
+                        padding: '8px 4px', 
+                        borderBottom: '1px solid #334155',
+                        background: '#064e3b20'
+                      }}
+                    >
+                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                        <Space size={4}>
+                          <Tag color={severityColors[item.severity]} style={{ fontSize: 11, padding: '0 4px' }}>
+                            {ProblemTypeLabels[item.type]}
+                          </Tag>
+                          <Tag color="green" style={{ fontSize: 11, padding: '0 4px' }}>新增</Tag>
+                        </Space>
+                        <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.4 }}>
+                          {item.description.length > 60 ? item.description.slice(0, 60) + '...' : item.description}
+                        </div>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card
+                size="small"
+                style={{ background: '#0f172a', border: '1px solid #faad14', height: '100%' }}
+                title={
+                  <Space>
+                    <ClockCircleOutlined style={{ color: '#faad14' }} />
+                    <span>{ProblemGroupTypeLabels.still_exists}</span>
+                    <Tag color="orange" style={{ marginLeft: 0 }}>{stillExistProblems.length}</Tag>
+                  </Space>
+                }
+              >
+                <List
+                  size="small"
+                  dataSource={stillExistProblems}
+                  locale={{ emptyText: '暂无数据' }}
+                  renderItem={(item) => (
+                    <List.Item
+                      onClick={() => handleViewDetail(item)}
+                      style={{ cursor: 'pointer', padding: '8px 4px', borderBottom: '1px solid #334155' }}
+                    >
+                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                        <Space size={4}>
+                          <Tag color={severityColors[item.severity]} style={{ fontSize: 11, padding: '0 4px' }}>
+                            {ProblemTypeLabels[item.type]}
+                          </Tag>
+                          <Tag color="red" style={{ fontSize: 11, padding: '0 4px' }}>待处理</Tag>
+                        </Space>
+                        <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.4 }}>
+                          {item.description.length > 60 ? item.description.slice(0, 60) + '...' : item.description}
+                        </div>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card
+                size="small"
+                style={{ background: '#0f172a', border: '1px solid #52c41a', height: '100%' }}
+                title={
+                  <Space>
+                    <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                    <span>{ProblemGroupTypeLabels.resolved}</span>
+                    <Tag color="green" style={{ marginLeft: 0 }}>{resolvedProblems.length}</Tag>
+                  </Space>
+                }
+              >
+                <List
+                  size="small"
+                  dataSource={resolvedProblems}
+                  locale={{ emptyText: '暂无数据' }}
+                  renderItem={(item) => (
+                    <List.Item
+                      onClick={() => handleViewDetail(item)}
+                      style={{ cursor: 'pointer', padding: '8px 4px', borderBottom: '1px solid #334155' }}
+                    >
+                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                        <Space size={4}>
+                          <Tag color={severityColors[item.severity]} style={{ fontSize: 11, padding: '0 4px' }}>
+                            {ProblemTypeLabels[item.type]}
+                          </Tag>
+                          <Tag color="green" style={{ fontSize: 11, padding: '0 4px' }}>已解决</Tag>
+                        </Space>
+                        <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.4 }}>
+                          {item.description.length > 60 ? item.description.slice(0, 60) + '...' : item.description}
+                        </div>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card
+                size="small"
+                style={{ background: '#0f172a', border: '1px solid #ff4d4f', height: '100%' }}
+                title={
+                  <Space>
+                    <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
+                    <span>{ProblemGroupTypeLabels.still_abnormal_after_handle}</span>
+                    <Tag color="red" style={{ marginLeft: 0 }}>{stillAbnormalProblems.length}</Tag>
+                  </Space>
+                }
+              >
+                <List
+                  size="small"
+                  dataSource={stillAbnormalProblems}
+                  locale={{ emptyText: '暂无数据' }}
+                  renderItem={(item) => (
+                    <List.Item
+                      onClick={() => handleViewDetail(item)}
+                      style={{ cursor: 'pointer', padding: '8px 4px', borderBottom: '1px solid #334155' }}
+                    >
+                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                        <Space size={4}>
+                          <Tag color={severityColors[item.severity]} style={{ fontSize: 11, padding: '0 4px' }}>
+                            {ProblemTypeLabels[item.type]}
+                          </Tag>
+                          <Tag color={item.status === 'processing' ? 'orange' : 'red'} style={{ fontSize: 11, padding: '0 4px' }}>
+                            {ProblemStatusLabels[item.status]}
+                          </Tag>
+                        </Space>
+                        <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.4 }}>
+                          {item.description.length > 60 ? item.description.slice(0, 60) + '...' : item.description}
+                        </div>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              </Card>
+            </Col>
+          </Row>
+        ) : (
+          <div style={{ color: '#64748b', textAlign: 'center', padding: '20px 0' }}>
+            请切换至「看板视图」查看分组
+          </div>
+        )}
+      </Card>
+
+      <Card
         style={{ background: '#1e293b', border: '1px solid #334155' }}
         title={
           <Space>
@@ -343,6 +568,22 @@ const ProblemList: React.FC = () => {
               style={{ width: 220 }}
               size="small"
             />
+            <Select
+              size="small"
+              style={{ width: 150 }}
+              placeholder="全局处理人"
+              allowClear
+              showSearch
+              value={handlerName || undefined}
+              onChange={(val) => setHandlerName(val || '')}
+              filterOption={(input, option) =>
+                (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
+              }
+            >
+              {handlerOptions.map(name => (
+                <Option key={name} value={name}>{name}</Option>
+              ))}
+            </Select>
             <Select
               size="small"
               style={{ width: 130 }}
@@ -531,6 +772,60 @@ const ProblemList: React.FC = () => {
                 </Descriptions>
               </>
             )}
+
+            <Divider style={{ borderColor: '#334155', margin: '12px 0' }} />
+            <div style={{ marginBottom: 12, fontWeight: 500 }}>最近两次处理痕迹</div>
+            {(() => {
+              let history: OpinionHistoryItem[] = [];
+              if (selectedProblem.opinionHistory && selectedProblem.opinionHistory.length > 0) {
+                history = [...selectedProblem.opinionHistory].slice(-2).reverse();
+              } else if (selectedProblem.lastHandledAt || selectedProblem.handlerOpinion || selectedProblem.lastHandledBy) {
+                history = [{
+                  id: 'current',
+                  status: selectedProblem.status,
+                  opinion: selectedProblem.handlerOpinion,
+                  handledBy: selectedProblem.lastHandledBy || selectedProblem.handledBy,
+                  handledAt: selectedProblem.lastHandledAt || selectedProblem.updatedAt,
+                }];
+              }
+
+              if (history.length === 0) {
+                return <div style={{ color: '#64748b', fontSize: 13, padding: '8px 0' }}>暂无处理记录</div>;
+              }
+
+              return (
+                <Timeline
+                  mode="left"
+                  style={{ paddingLeft: 8 }}
+                  items={history.map((item) => ({
+                    color: item.status === 'resolved' ? 'green' : item.status === 'processing' ? 'blue' : 'gray',
+                    label: <span style={{ color: '#94a3b8', fontSize: 12 }}>{item.handledAt}</span>,
+                    children: (
+                      <div style={{ paddingBottom: 8 }}>
+                        <Space size={8} style={{ marginBottom: 4 }}>
+                          {item.handledBy && (
+                            <span style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 500 }}>
+                              {item.handledBy}
+                            </span>
+                          )}
+                          <Tag
+                            color={item.status === 'resolved' ? 'green' : item.status === 'processing' ? 'orange' : 'red'}
+                            style={{ fontSize: 11, padding: '0 6px', margin: 0 }}
+                          >
+                            {ProblemStatusLabels[item.status]}
+                          </Tag>
+                        </Space>
+                        {item.opinion && (
+                          <div style={{ fontSize: 12, color: '#cbd5e1', marginTop: 4, lineHeight: 1.6 }}>
+                            {item.opinion}
+                          </div>
+                        )}
+                      </div>
+                    ),
+                  }))}
+                />
+              );
+            })()}
           </>
         )}
       </Drawer>
@@ -564,6 +859,25 @@ const ProblemList: React.FC = () => {
               <Radio.Button value="processing">处理中</Radio.Button>
               <Radio.Button value="resolved">已解决</Radio.Button>
             </Radio.Group>
+          </Form.Item>
+
+          <Form.Item
+            label="处理人"
+            name="handler"
+            rules={[{ required: true, message: '请输入或选择处理人' }]}
+          >
+            <Select
+              placeholder="请输入或选择处理人"
+              showSearch
+              allowClear
+              filterOption={(input, option) =>
+                (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
+              }
+            >
+              {handlerOptions.map(name => (
+                <Option key={name} value={name}>{name}</Option>
+              ))}
+            </Select>
           </Form.Item>
 
           <Form.Item label="处理意见" name="opinion">

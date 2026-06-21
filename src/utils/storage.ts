@@ -562,7 +562,9 @@ export function detectDuplicates(files: LicenseFile[]): DuplicateFileInfo[] {
   const numberMap = new Map<string, string[]>();
   const supplierMap = new Map<string, string[]>();
   
-  files.forEach(file => {
+  const pendingFiles = files.filter(f => f.duplicateConfirmed !== true);
+  
+  pendingFiles.forEach(file => {
     if (file.name) {
       const normalizedName = file.name.toLowerCase().trim();
       if (!nameMap.has(normalizedName)) {
@@ -658,17 +660,19 @@ export function detectDuplicates(files: LicenseFile[]): DuplicateFileInfo[] {
 
 export function getIncrementalReportContent(
   compareResult: CompareResult,
-  baselineRecord: AuditRecord
+  baselineRecord: AuditRecord,
+  currentAuditDate?: string
 ): string {
   const { files, materials, problems, summary } = compareResult;
   const lines = [];
+  const auditDate = currentAuditDate || dayjs().format('YYYY-MM-DD');
   
   lines.push('='.repeat(70));
   lines.push('                    增量复核报告');
   lines.push('='.repeat(70));
   lines.push('');
   lines.push(`对比基准：${baselineRecord.date}（${baselineRecord.reviewer}）`);
-  lines.push(`当前审查：${dayjs().format('YYYY-MM-DD')}`);
+  lines.push(`当前审查：${auditDate}`);
   lines.push(`生成时间：${dayjs().format('YYYY-MM-DD HH:mm:ss')}`);
   lines.push('');
   lines.push('-'.repeat(70));

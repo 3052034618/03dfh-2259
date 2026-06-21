@@ -64,6 +64,9 @@ import {
   DiffTypeLabels,
   FileFieldLabels,
   MaterialFieldLabels,
+  FileDiff,
+  MaterialDiff,
+  ProblemDiff,
 } from '../types';
 import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
@@ -73,7 +76,7 @@ const { Option } = Select;
 const { TabPane } = Tabs;
 
 const ArchiveExport: React.FC = () => {
-  const { state, saveAuditRecord, getFileById, getMaterialById, compareWithBaseline, setBaselineRecord, getAuditRecordById, getIncrementalReportContent } = useApp();
+  const { state, saveAuditRecord, getFileById, getMaterialById, compareWithBaseline, setBaselineRecord, getAuditRecordById, getIncrementalReportContent, restoreFromSnapshot } = useApp();
   const [recordModalVisible, setRecordModalVisible] = useState(false);
   const [recordForm] = Form.useForm();
   const [selectedRecord, setSelectedRecord] = useState<AuditRecord | null>(null);
@@ -83,6 +86,7 @@ const ArchiveExport: React.FC = () => {
   const [selectedBaselineId, setSelectedBaselineId] = useState<string | undefined>(state.baselineRecordId);
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
   const [compareTab, setCompareTab] = useState<'files' | 'materials' | 'problems'>('files');
+  const [previewMode, setPreviewMode] = useState<'txt' | 'table'>('table');
 
   const sortedRecords = useMemo(() => {
     return [...state.auditRecords].sort((a, b) => 
@@ -360,7 +364,7 @@ const ArchiveExport: React.FC = () => {
     }
 
     if (incrementalFormat === 'txt') {
-      const content = getIncrementalReportContent(compareResult, baselineRecord);
+      const content = getIncrementalReportContent(compareResult, baselineRecord, state.currentAuditDate);
       const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -818,6 +822,241 @@ const ArchiveExport: React.FC = () => {
                   </Col>
                 </Row>
 
+                <Collapse
+                  style={{ marginBottom: 12, background: '#0f172a', border: '1px solid #334155' }}
+                  items={[
+                    {
+                      key: 'preview',
+                      label: (
+                        <Space>
+                          <FileTextOutlined style={{ color: '#60a5fa' }} />
+                          <span>报告预览</span>
+                        </Space>
+                      ),
+                      children: (
+                        <div>
+                          <div style={{ marginBottom: 12 }}>
+                            <Radio.Group
+                              size="small"
+                              value={previewMode}
+                              onChange={e => setPreviewMode(e.target.value)}
+                              optionType="button"
+                              buttonStyle="solid"
+                            >
+                              <Radio.Button value="table">表格预览</Radio.Button>
+                              <Radio.Button value="txt">TXT预览</Radio.Button>
+                            </Radio.Group>
+                          </div>
+
+                          {previewMode === 'txt' ? (
+                            <div
+                              style={{
+                                height: 400,
+                                overflow: 'auto',
+                                background: '#1a1a2e',
+                                border: '1px solid #334155',
+                                borderRadius: 4,
+                                padding: 12,
+                                fontFamily: 'monospace',
+                                fontSize: 12,
+                                color: '#e2e8f0',
+                                whiteSpace: 'pre-wrap',
+                                lineHeight: 1.6,
+                              }}
+                            >
+                              {getIncrementalReportContent(
+                                compareResult,
+                                getAuditRecordById(selectedBaselineId!)!,
+                                state.currentAuditDate
+                              )}
+                            </div>
+                          ) : (
+                            <div style={{ height: 400, overflow: 'auto' }}>
+                              <Card
+                                size="small"
+                                style={{ marginBottom: 8, background: '#1e293b', border: '1px solid #334155' }}
+                                title={
+                                  <Space size={4}>
+                                    <span style={{ fontSize: 12, fontWeight: 600 }}>1. 复核摘要</span>
+                                  </Space>
+                                }
+                              >
+                                <Descriptions size="small" column={2} labelStyle={{ color: '#64748b', fontSize: 11 }} contentStyle={{ fontSize: 11 }}>
+                                  <Descriptions.Item label="基准日期">{getAuditRecordById(selectedBaselineId!)?.date || '-'}</Descriptions.Item>
+                                  <Descriptions.Item label="基准审查人">{getAuditRecordById(selectedBaselineId!)?.reviewer || '-'}</Descriptions.Item>
+                                  <Descriptions.Item label="当前审查日期">{state.currentAuditDate}</Descriptions.Item>
+                                  <Descriptions.Item label="基准文件数">{getAuditRecordById(selectedBaselineId!)?.totalFiles || 0}</Descriptions.Item>
+                                  <Descriptions.Item label="证照变化">
+                                    <Space size={4}>
+                                      <Tag color="green" style={{ fontSize: 10 }}>+{compareResult.summary.files.added}</Tag>
+                                      <Tag color="red" style={{ fontSize: 10 }}>-{compareResult.summary.files.deleted}</Tag>
+                                      <Tag color="orange" style={{ fontSize: 10 }}>~{compareResult.summary.files.modified}</Tag>
+                                    </Space>
+                                  </Descriptions.Item>
+                                  <Descriptions.Item label="材料变化">
+                                    <Space size={4}>
+                                      <Tag color="green" style={{ fontSize: 10 }}>+{compareResult.summary.materials.added}</Tag>
+                                      <Tag color="red" style={{ fontSize: 10 }}>-{compareResult.summary.materials.deleted}</Tag>
+                                      <Tag color="orange" style={{ fontSize: 10 }}>~{compareResult.summary.materials.modified}</Tag>
+                                    </Space>
+                                  </Descriptions.Item>
+                                  <Descriptions.Item label="风险变化">
+                                    <Space size={4}>
+                                      <Tag color="green" style={{ fontSize: 10 }}>+{compareResult.summary.problems.added}</Tag>
+                                      <Tag color="red" style={{ fontSize: 10 }}>-{compareResult.summary.problems.deleted}</Tag>
+                                      <Tag color="orange" style={{ fontSize: 10 }}>~{compareResult.summary.problems.modified}</Tag>
+                                    </Space>
+                                  </Descriptions.Item>
+                                </Descriptions>
+                              </Card>
+
+                              <Card
+                                size="small"
+                                style={{ marginBottom: 8, background: '#1e293b', border: '1px solid #334155' }}
+                                title={
+                                  <Space size={4}>
+                                    <span style={{ fontSize: 12, fontWeight: 600 }}>2. 证照变化</span>
+                                    <Tag color="blue" style={{ fontSize: 10 }}>{compareResult.files.length} 条</Tag>
+                                  </Space>
+                                }
+                              >
+                                <Table
+                                  size="small"
+                                  dataSource={compareResult.files}
+                                  rowKey="id"
+                                  pagination={false}
+                                  scroll={{ y: 160 }}
+                                  columns={[
+                                    {
+                                      title: '变化类型',
+                                      key: 'diffType',
+                                      width: 80,
+                                      render: (_, r) => (
+                                        <Tag color={getDiffColor((r as FileDiff).diffType)} style={{ fontSize: 10 }}>
+                                          {DiffTypeLabels[(r as FileDiff).diffType as DiffType]}
+                                        </Tag>
+                                      ),
+                                    },
+                                    { title: '证照名称', dataIndex: 'fileName', key: 'fileName', width: 140, ellipsis: true },
+                                    {
+                                      title: '变化字段',
+                                      key: 'changedField',
+                                      width: 90,
+                                      render: (_, r) => {
+                                        const fd = r as FileDiff;
+                                        return fd.changedField ? FileFieldLabels[fd.changedField as keyof LicenseFile] || fd.changedField : '-';
+                                      },
+                                    },
+                                    { title: '原值', dataIndex: 'oldValue', key: 'oldValue', width: 100, ellipsis: true, render: (v?: string) => v || '-' },
+                                    { title: '新值', dataIndex: 'newValue', key: 'newValue', width: 100, ellipsis: true, render: (v?: string) => v || '-' },
+                                  ]}
+                                />
+                              </Card>
+
+                              <Card
+                                size="small"
+                                style={{ marginBottom: 8, background: '#1e293b', border: '1px solid #334155' }}
+                                title={
+                                  <Space size={4}>
+                                    <span style={{ fontSize: 12, fontWeight: 600 }}>3. 材料变化</span>
+                                    <Tag color="purple" style={{ fontSize: 10 }}>{compareResult.materials.length} 条</Tag>
+                                  </Space>
+                                }
+                              >
+                                <Table
+                                  size="small"
+                                  dataSource={compareResult.materials}
+                                  rowKey="id"
+                                  pagination={false}
+                                  scroll={{ y: 160 }}
+                                  columns={[
+                                    {
+                                      title: '变化类型',
+                                      key: 'diffType',
+                                      width: 80,
+                                      render: (_, r) => (
+                                        <Tag color={getDiffColor((r as MaterialDiff).diffType)} style={{ fontSize: 10 }}>
+                                          {DiffTypeLabels[(r as MaterialDiff).diffType as DiffType]}
+                                        </Tag>
+                                      ),
+                                    },
+                                    { title: '材料名称', dataIndex: 'materialName', key: 'materialName', width: 140, ellipsis: true },
+                                    {
+                                      title: '变化字段',
+                                      key: 'changedField',
+                                      width: 90,
+                                      render: (_, r) => {
+                                        const md = r as MaterialDiff;
+                                        return md.changedField ? MaterialFieldLabels[md.changedField as keyof Material] || md.changedField : '-';
+                                      },
+                                    },
+                                    { title: '原值', dataIndex: 'oldValue', key: 'oldValue', width: 100, ellipsis: true, render: (v?: string) => v || '-' },
+                                    { title: '新值', dataIndex: 'newValue', key: 'newValue', width: 100, ellipsis: true, render: (v?: string) => v || '-' },
+                                  ]}
+                                />
+                              </Card>
+
+                              <Card
+                                size="small"
+                                style={{ background: '#1e293b', border: '1px solid #334155' }}
+                                title={
+                                  <Space size={4}>
+                                    <span style={{ fontSize: 12, fontWeight: 600 }}>4. 新增风险</span>
+                                    <Tag color="orange" style={{ fontSize: 10 }}>
+                                      {compareResult.problems.filter(p => p.diffType === 'added').length} 条
+                                    </Tag>
+                                  </Space>
+                                }
+                              >
+                                <Table
+                                  size="small"
+                                  dataSource={compareResult.problems.filter(p => p.diffType === 'added')}
+                                  rowKey="id"
+                                  pagination={false}
+                                  scroll={{ y: 160 }}
+                                  columns={[
+                                    {
+                                      title: '变化类型',
+                                      key: 'diffType',
+                                      width: 80,
+                                      render: () => (
+                                        <Tag color="green" style={{ fontSize: 10 }}>新增</Tag>
+                                      ),
+                                    },
+                                    {
+                                      title: '问题类型',
+                                      key: 'problemType',
+                                      width: 120,
+                                      render: (_, r) => ProblemTypeLabels[(r as ProblemDiff).problemType as ProblemType],
+                                    },
+                                    {
+                                      title: '风险等级',
+                                      key: 'severity',
+                                      width: 80,
+                                      render: (_, r) => {
+                                        const pd = r as ProblemDiff;
+                                        return (
+                                          <Tag
+                                            color={pd.severity === 'high' ? 'red' : pd.severity === 'medium' ? 'orange' : 'blue'}
+                                            style={{ fontSize: 10 }}
+                                          >
+                                            {pd.severity === 'high' ? '高风险' : pd.severity === 'medium' ? '中风险' : '低风险'}
+                                          </Tag>
+                                        );
+                                      },
+                                    },
+                                    { title: '描述', dataIndex: 'description', key: 'description', ellipsis: true },
+                                  ]}
+                                />
+                              </Card>
+                            </div>
+                          )}
+                        </div>
+                      ),
+                    },
+                  ]}
+                />
+
                 <Tabs
                   activeKey={compareTab}
                   onChange={(key) => setCompareTab(key as any)}
@@ -1136,22 +1375,47 @@ const ArchiveExport: React.FC = () => {
         title={
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingRight: 32 }}>
             <span>审查记录详情</span>
-            <Button
-              type="primary"
-              size="small"
-              icon={<DiffOutlined />}
-              onClick={() => {
-                if (!selectedRecord) return;
-                setBaselineRecord(selectedRecord.id);
-                setSelectedBaselineId(selectedRecord.id);
-                const result = compareWithBaseline(selectedRecord.id);
-                setCompareResult(result);
-                setRecordDetailVisible(false);
-                message.success('已设为对比基准并完成对比');
-              }}
-            >
-              设为对比基准
-            </Button>
+            <Space>
+              <Button
+                size="small"
+                danger
+                icon={<ReloadOutlined />}
+                onClick={() => {
+                  if (!selectedRecord) return;
+                  Modal.confirm({
+                    title: '确认恢复到此审查快照？',
+                    content: `当前的证照、材料、问题数据将被替换为${selectedRecord.date}（${selectedRecord.reviewer}）保存时的快照，此操作不可撤销`,
+                    okText: '确认恢复',
+                    okType: 'danger',
+                    cancelText: '取消',
+                    onOk: () => {
+                      restoreFromSnapshot(selectedRecord.snapshot);
+                      message.success('已恢复快照，可继续编辑审查草稿');
+                      setRecordDetailVisible(false);
+                      message.info('提示：如果需要增量对比，可以再选另一条记录设为基准');
+                    },
+                  });
+                }}
+              >
+                恢复到当前草稿
+              </Button>
+              <Button
+                type="primary"
+                size="small"
+                icon={<DiffOutlined />}
+                onClick={() => {
+                  if (!selectedRecord) return;
+                  setBaselineRecord(selectedRecord.id);
+                  setSelectedBaselineId(selectedRecord.id);
+                  const result = compareWithBaseline(selectedRecord.id);
+                  setCompareResult(result);
+                  setRecordDetailVisible(false);
+                  message.success('已设为对比基准并完成对比');
+                }}
+              >
+                设为对比基准
+              </Button>
+            </Space>
           </div>
         }
         width={640}
